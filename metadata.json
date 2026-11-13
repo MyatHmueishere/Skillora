@@ -1,0 +1,6 @@
+{
+  "name": "Skillora",
+  "description": "AI-Powered Personalized Learning Platform - Learn Smarter. Grow Further.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-canvas: #FAF6F2;
+    --bg-card: #FFFCFA;
+    --text-primary: #343047;
+    --text-secondary: #8B8295;
+    --border-pastel: #EEE6E5;
+    --lavender-primary: #C9B7E8;
+    --lavender-deep: #A78BCE;
+    --lavender-light: #F0E9FA;
+    --peach-soft: #F8D9D0;
+    --pink-warm: #F6C6D1;
+    --yellow-cream: #FFF1D6;
+    --mint-pastel: #DCECD9;
+    --mint-accent: #A9D5B3;
+  }
+
+  body {
+    font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #FAF6F2;
+    color: #343047;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4, h5, h6, .font-display {
+    font-family: 'Nunito', 'DM Sans', sans-serif;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}
+
+/* Soft Pastel 3D Card & Clay Surface Utilities */
+.pastel-card {
+  background-color: #FFFCFA;
+  border: 1px solid #EEE6E5;
+  border-radius: 22px;
+  box-shadow:
+    0 10px 28px -10px rgba(124, 102, 148, 0.12),
+    0 2px 6px -1px rgba(124, 102, 148, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.pastel-card-hover {
+  transition: transform 200ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 200ms cubic-bezier(0.16, 1, 0.3, 1), border-color 200ms ease;
+}
+
+.pastel-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 16px 34px -10px rgba(124, 102, 148, 0.18),
+    0 4px 10px -2px rgba(124, 102, 148, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.clay-button-primary {
+  background: linear-gradient(145deg, #B59BDD, #9C7EC5);
+  color: #FFFFFF;
+  border-radius: 16px;
+  box-shadow:
+    0 8px 18px -6px rgba(167, 139, 206, 0.55),
+    inset 0 2px 3px rgba(255, 255, 255, 0.4),
+    inset 0 -2px 4px rgba(105, 76, 148, 0.25);
+  transition: transform 150ms ease, box-shadow 150ms ease, filter 150ms ease;
+}
+
+.clay-button-primary:hover {
+  filter: brightness(1.03);
+  transform: translateY(-1px);
+  box-shadow:
+    0 10px 22px -6px rgba(167, 139, 206, 0.65),
+    inset 0 2px 4px rgba(255, 255, 255, 0.45),
+    inset 0 -2px 4px rgba(105, 76, 148, 0.25);
+}
+
+.clay-button-primary:active {
+  transform: translateY(0px);
+}
+
+.clay-button-soft {
+  background: #FFFCFA;
+  color: #343047;
+  border: 1px solid #EEE6E5;
+  border-radius: 16px;
+  box-shadow:
+    0 4px 12px -4px rgba(124, 102, 148, 0.1),
+    inset 0 1px 1px rgba(255, 255, 255, 0.95);
+  transition: transform 150ms ease, background-color 150ms ease, border-color 150ms ease;
+}
+
+.clay-button-soft:hover {
+  background: #F6F1FC;
+  border-color: #DCD0EF;
+}
+
+/* Tactile 3D Clay Squircle Icon Badges */
+.clay-squircle-lavender {
+  background: linear-gradient(145deg, #C7B2EA, #A486D3);
+  box-shadow:
+    0 8px 16px -4px rgba(164, 134, 211, 0.45),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.55),
+    inset -2px -3px 5px rgba(116, 86, 168, 0.35);
+}
+
+.clay-squircle-peach {
+  background: linear-gradient(145deg, #FBB5A4, #EE937E);
+  box-shadow:
+    0 8px 16px -4px rgba(238, 147, 126, 0.45),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.55),
+    inset -2px -3px 5px rgba(196, 104, 83, 0.35);
+}
+
+.clay-squircle-mint {
+  background: linear-gradient(145deg, #B5DEC0, #88C297);
+  box-shadow:
+    0 8px 16px -4px rgba(136, 194, 151, 0.45),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.55),
+    inset -2px -3px 5px rgba(82, 145, 98, 0.35);
+}
+
+.clay-squircle-yellow {
+  background: linear-gradient(145deg, #FFE09E, #F2C36B);
+  box-shadow:
+    0 8px 16px -4px rgba(242, 195, 107, 0.45),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.65),
+    inset -2px -3px 5px rgba(198, 146, 52, 0.3);
+}
+
+.clay-squircle-pink {
+  background: linear-gradient(145deg, #F8C4D4, #E896B0);
+  box-shadow:
+    0 8px 16px -4px rgba(232, 150, 176, 0.45),
+    inset 2px 2px 4px rgba(255, 255, 255, 0.55),
+    inset -2px -3px 5px rgba(188, 96, 128, 0.35);
+}
+
+/* Custom soft pastel scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #DFD5E8;
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #C9B7E8;
+}
