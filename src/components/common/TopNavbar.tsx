@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Menu, Search, Flame, ChevronDown, User, Settings, LogOut, MessageCircle } from 'lucide-react';
+import { Menu, Search, Flame, ChevronDown, User, Settings, LogOut, MessageCircle, Trophy } from 'lucide-react';
 import { AppView, UserProfile, NotificationItem } from '../../types';
+import { DEFAULT_AVATAR_URL } from '../../lib/studentProfile';
 import { NotificationDropdown } from './NotificationDropdown';
 
 interface TopNavbarProps {
@@ -9,11 +10,17 @@ interface TopNavbarProps {
   user: UserProfile;
   notifications: NotificationItem[];
   onMarkAllAsRead: () => void;
+  onMarkNotificationRead?: (id: string) => void;
   onClearNotifications: () => void;
   onOpenMobileMenu: () => void;
   onLogout: () => void;
   searchQuery: string;
   onSearchChange: (q: string) => void;
+  isAuthenticated?: boolean;
+  onOpenNotificationSettings?: () => void;
+  totalXp?: number;
+  learnerLevel?: number;
+  onOpenAchievements?: () => void;
 }
 
 export const TopNavbar: React.FC<TopNavbarProps> = ({
@@ -22,11 +29,17 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
   user,
   notifications,
   onMarkAllAsRead,
+  onMarkNotificationRead,
   onClearNotifications,
   onOpenMobileMenu,
   onLogout,
   searchQuery,
   onSearchChange,
+  isAuthenticated = false,
+  onOpenNotificationSettings,
+  totalXp = 0,
+  learnerLevel = 1,
+  onOpenAchievements,
 }) => {
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
@@ -72,7 +85,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             {getPageTitle(currentView)}
           </h2>
           <p className="text-xs text-[#8B8295] truncate hidden sm:block">
-            Welcome back, {user.name.split(' ')[0]}!
+            Welcome back, {(user.name ? user.name.split(' ')[0] : '') || 'Student'}!
           </p>
         </div>
       </div>
@@ -93,6 +106,18 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
 
       {/* Zone 3: Circular Soft Pastel Actions */}
       <div className="flex items-center gap-2.5 shrink-0">
+        {/* Level & XP pill */}
+        <button
+          onClick={() => (onOpenAchievements ? onOpenAchievements() : onNavigate('progress'))}
+          className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#F0E9FA] border border-[#E2D6F5] text-[#5D438E] text-xs font-bold shadow-[0_4px_12px_-4px_rgba(124,102,148,0.16)] hover:brightness-98 transition-all"
+          title={`Level ${learnerLevel} · ${totalXp} XP — View Achievements`}
+        >
+          <Trophy className="w-3.5 h-3.5 text-[#8E6EC8] shrink-0" />
+          <span className="font-mono tabular-nums whitespace-nowrap">
+            Lv.{learnerLevel} · {totalXp} XP
+          </span>
+        </button>
+
         {/* Streak badge */}
         <button
           onClick={() => onNavigate('progress')}
@@ -109,8 +134,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         <NotificationDropdown
           notifications={notifications}
           onMarkAllAsRead={onMarkAllAsRead}
+          onMarkNotificationRead={onMarkNotificationRead}
           onClearNotifications={onClearNotifications}
           onNavigate={onNavigate}
+          onOpenNotificationSettings={onOpenNotificationSettings}
         />
 
         {/* Quick AI Chat Circular Icon */}
@@ -131,10 +158,16 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
             aria-label="User menu"
           >
             <img
-              src={user.avatarUrl}
+              src={user.avatarUrl || DEFAULT_AVATAR_URL}
               alt={user.name}
               referrerPolicy="no-referrer"
-              className="w-8 h-8 rounded-full object-cover"
+              onError={(e) => {
+                const target = e.currentTarget;
+                if (target.src !== window.location.origin + DEFAULT_AVATAR_URL) {
+                  target.src = DEFAULT_AVATAR_URL;
+                }
+              }}
+              className="w-8 h-8 rounded-full object-cover bg-[#FAF6F2]"
             />
             <ChevronDown className="w-3.5 h-3.5 text-[#8B8295] mr-1.5 hidden xl:block" />
           </button>
@@ -148,10 +181,12 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
               />
               <div className="absolute right-0 mt-2.5 w-60 rounded-[22px] bg-[#FFFCFA] border border-[#EEE6E5] shadow-[0_20px_44px_-12px_rgba(88,68,112,0.22)] z-50 py-1.5 overflow-hidden animate-in fade-in duration-150">
                 <div className="px-4 py-3 border-b border-[#EEE6E5] bg-[#FAF6F2]/50">
-                  <p className="font-display text-sm font-extrabold text-[#343047]">{user.name}</p>
+                  <p className="font-display text-sm font-extrabold text-[#343047]">
+                    {user.name || 'Student'}
+                  </p>
                   <p className="text-[11px] text-[#8B8295] truncate">{user.email}</p>
                   <p className="text-[11px] text-[#8E6EC8] font-semibold mt-1 truncate">
-                    {user.careerGoal}
+                    {user.careerGoal || 'Set your career goal'}
                   </p>
                 </div>
 
@@ -188,7 +223,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
                     className="w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-xs font-semibold text-[#C85A6E] hover:bg-[#F8D9D0]/50 transition-colors text-left"
                   >
                     <LogOut className="w-4 h-4 text-[#D97284]" />
-                    <span>Exit to Landing Page</span>
+                    <span>{isAuthenticated ? 'Sign Out' : 'Exit to Landing Page'}</span>
                   </button>
                 </div>
               </div>

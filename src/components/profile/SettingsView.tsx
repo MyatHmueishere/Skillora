@@ -1,54 +1,322 @@
-import React, { useState } from 'react';
-import { Settings, Check, X, AlertCircle, Download } from 'lucide-react';
-import { UserProfile } from '../../types';
+import React, { useEffect, useState } from 'react';
+import {
+  Settings,
+  Check,
+  X,
+  AlertCircle,
+  Download,
+  Loader2,
+  BellRing,
+  BellOff,
+  PauseCircle,
+  PlayCircle,
+  Clock,
+  Globe,
+  Send,
+} from 'lucide-react';
+import {
+  NotificationPreferences,
+  PushPublicConfig,
+  UserProfile,
+} from '../../types';
 import { ClayIconBadge } from '../common/PastelIllustrations';
+import {
+  getSupabaseClient,
+  formatAuthError,
+  MIN_PASSWORD_LENGTH,
+  PASSWORD_MIN_LENGTH_ERROR,
+  validatePasswordStrength,
+} from '../../lib/supabase';
+import { StudentProfileDbError } from '../../lib/studentProfile';
+import {
+  BrowserPushSupportStatus,
+  createDefaultNotificationPreferences,
+  EnableBrowserPushResult,
+  getBrowserPushSupportStatus,
+} from '../../lib/notifications';
+import {
+  isNotificationsPausedAt,
+  resolveSafeTimeZone,
+} from '../../../shared/inactivityEngine';
+
+export type SettingsTabId = 'personal' | 'learning' | 'notifications' | 'security';
 
 interface SettingsViewProps {
   user: UserProfile;
-  onUpdateUser: (updated: Partial<UserProfile>) => void;
+  onUpdateUser: (updated: Partial<UserProfile>) => Promise<void> | void;
+  isAuthenticated?: boolean;
+  initialTab?: SettingsTabId;
+  notificationPreferences?: NotificationPreferences;
+  notificationSchemaMigrationRequired?: boolean;
+  pushConfig?: PushPublicConfig;
+  pushSubscriptionActive?: boolean;
+  onUpdateNotificationPreferences?: (
+    updates: Partial<NotificationPreferences>
+  ) => Promise<void>;
+  onEnableBrowserPush?: () => Promise<EnableBrowserPushResult>;
+  onDisableBrowserPush?: () => Promise<void>;
+  onSendTestPush?: () => Promise<{ sentCount: number; failedCount: number }>;
+  onPauseNotifications?: (
+    duration: '24h' | '3d' | '7d' | 'indefinite'
+  ) => Promise<void>;
+  onResumeNotifications?: () => Promise<void>;
 }
 
-export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }) => {
-  const [activeTab, setActiveTab] = useState<'personal' | 'learning' | 'notifications' | 'security'>('personal');
+const COMMON_TIMEZONES = [
+  'UTC',
+  'America/Los_Angeles',
+  'America/Denver',
+  'America/Chicago',
+  'America/New_York',
+  'Europe/London',
+  'Europe/Berlin',
+  'Europe/Paris',
+  'Asia/Dubai',
+  'Asia/Kolkata',
+  'Asia/Singapore',
+  'Asia/Tokyo',
+  'Australia/Sydney',
+];
+
+export const SettingsView: React.FC<SettingsViewProps> = ({
+  user,
+  onUpdateUser,
+  isAuthenticated = false,
+  initialTab = 'personal',
+  notificationPreferences,
+  notificationSchemaMigrationRequired = false,
+  pushConfig = {
+    pushConfigured: false,
+    vapidPublicKey: '',
+    schedulerConfigured: false,
+    serviceRoleConfigured: false,
+  },
+  pushSubscriptionActive = false,
+  onUpdateNotificationPreferences,
+  onEnableBrowserPush,
+  onDisableBrowserPush,
+  onSendTestPush,
+  onPauseNotifications,
+  onResumeNotifications,
+}) => {
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
 
   const [name, setName] = useState(user.name);
   const [email, setEmail] = useState(user.email);
   const [preferredHours, setPreferredHours] = useState(user.preferredHoursPerDay);
   const [knowledgeLevel, setKnowledgeLevel] = useState(user.knowledgeLevel);
 
-  const [streakReminders, setStreakReminders] = useState(true);
-  const [weeklyDigest, setWeeklyDigest] = useState(true);
-  const [aiInsightAlerts, setAiInsightAlerts] = useState(true);
-  const [newCourseAlerts, setNewCourseAlerts] = useState(false);
+  useEffect(() => {
+    setName(user.name);
+    setEmail(user.email);
+    setPreferredHours(user.preferredHoursPerDay);
+    setKnowledgeLevel(user.knowledgeLevel);
+  }, [user]);
+
+  const detectedTz = resolveSafeTimeZone();
+  const basePrefs =
+    notificationPreferences ?? createDefaultNotificationPreferences(detectedTz);
+
+  const [inAppEnabled, setInAppEnabled] = useState(basePrefs.inAppEnabled);
+  const [preferredTime, setPreferredTime] = useState(basePrefs.preferredTime);
+  const [timezone, setTimezone] = useState(basePrefs.timezone);
+  const [inactivityReminders, setInactivityReminders] = useState(
+    basePrefs.inactivityReminders
+  );
+  const [streakReminders, setStreakReminders] = useState(basePrefs.streakReminders);
+  const [weeklyDigest, setWeeklyDigest] = useState(basePrefs.weeklyDigest);
+  const [aiInsightAlerts, setAiInsightAlerts] = useState(basePrefs.aiInsightAlerts);
+
+  useEffect(() => {
+    if (!notificationPreferences) return;
+    setInAppEnabled(notificationPreferences.inAppEnabled);
+    setPreferredTime(notificationPreferences.preferredTime);
+    setTimezone(notificationPreferences.timezone);
+    setInactivityReminders(notificationPreferences.inactivityReminders);
+    setStreakReminders(notificationPreferences.streakReminders);
+    setWeeklyDigest(notificationPreferences.weeklyDigest);
+    setAiInsightAlerts(notificationPreferences.aiInsightAlerts);
+  }, [notificationPreferences]);
+
+  const [browserPushStatus, setBrowserPushStatus] = useState<BrowserPushSupportStatus>({
+    supported: false,
+    permission: 'unsupported',
+    subscribed: false,
+  });
+  const [isUpdatingPush, setIsUpdatingPush] = useState(false);
+  const [isSendingTestPush, setIsSendingTestPush] = useState(false);
+  const [isSavingNotifs, setIsSavingNotifs] = useState(false);
+  const [pushNotice, setPushNotice] = useState('');
+  const [pushNoticeTone, setPushNoticeTone] = useState<'success' | 'info' | 'error'>('info');
+
+  useEffect(() => {
+    let active = true;
+    void getBrowserPushSupportStatus().then((status) => {
+      if (active) setBrowserPushStatus(status);
+    });
+    return () => {
+      active = false;
+    };
+  }, [pushSubscriptionActive]);
 
   const [currentPass, setCurrentPass] = useState('');
   const [newPass, setNewPass] = useState('');
   const [confirmPass, setConfirmPass] = useState('');
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [passwordError, setPasswordError] = useState('');
+  const [isUpdatingPassword, setIsUpdatingPassword] = useState(false);
 
   const [savedSuccess, setSavedSuccess] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState(false);
+  const [settingsError, setSettingsError] = useState('');
+  const [settingsDiagnostic, setSettingsDiagnostic] = useState('');
 
-  const handleSaveSettings = (e: React.FormEvent) => {
+  const timezoneOptions = Array.from(
+    new Set([detectedTz, timezone, ...COMMON_TIMEZONES].filter(Boolean))
+  );
+
+  const isPausedNow = isNotificationsPausedAt(basePrefs);
+
+  const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
-    onUpdateUser({
-      name,
-      email,
-      preferredHoursPerDay: preferredHours,
-      knowledgeLevel,
-    });
-    setSavedSuccess(true);
-    setTimeout(() => setSavedSuccess(false), 3000);
+    setSavedSuccess(false);
+    setSettingsError('');
+    setSettingsDiagnostic('');
+    setIsSavingSettings(true);
+
+    try {
+      await onUpdateUser({
+        name: name.trim(),
+        email: email.trim(),
+        preferredHoursPerDay: preferredHours,
+        knowledgeLevel,
+      });
+      if (onUpdateNotificationPreferences && timezone !== basePrefs.timezone) {
+        await onUpdateNotificationPreferences({ timezone });
+      }
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err) {
+      if (err instanceof StudentProfileDbError) {
+        setSettingsError(err.userMessage);
+        if (import.meta.env.DEV) {
+          setSettingsDiagnostic(err.toDiagnosticText());
+        }
+      } else if (err instanceof Error) {
+        setSettingsError(err.message);
+      } else {
+        setSettingsError('Failed to save settings to the database.');
+      }
+    } finally {
+      setIsSavingSettings(false);
+    }
   };
 
-  const handlePasswordChange = (e: React.FormEvent) => {
+  const handleSaveNotificationPrefs = async () => {
+    setSavedSuccess(false);
+    setSettingsError('');
+    setIsSavingNotifs(true);
+    try {
+      if (onUpdateNotificationPreferences) {
+        await onUpdateNotificationPreferences({
+          inAppEnabled,
+          preferredTime,
+          timezone,
+          inactivityReminders,
+          streakReminders,
+          weeklyDigest,
+          aiInsightAlerts,
+        });
+      }
+      setSavedSuccess(true);
+      setTimeout(() => setSavedSuccess(false), 3000);
+    } catch (err) {
+      setSettingsError(
+        err instanceof Error ? err.message : 'Failed to save notification preferences.'
+      );
+    } finally {
+      setIsSavingNotifs(false);
+    }
+  };
+
+  const handleEnableBrowserPushClick = async () => {
+    if (!onEnableBrowserPush) return;
+    setIsUpdatingPush(true);
+    setPushNotice('');
+    try {
+      const result = await onEnableBrowserPush();
+      setPushNotice(result.message);
+      setPushNoticeTone(result.enabled ? 'success' : result.permission === 'denied' ? 'error' : 'info');
+      const refreshedStatus = await getBrowserPushSupportStatus();
+      setBrowserPushStatus(refreshedStatus);
+    } catch (err) {
+      setPushNoticeTone('error');
+      setPushNotice(
+        err instanceof Error ? err.message : 'Could not enable browser push notifications.'
+      );
+    } finally {
+      setIsUpdatingPush(false);
+    }
+  };
+
+  const handleDisableBrowserPushClick = async () => {
+    if (!onDisableBrowserPush) return;
+    setIsUpdatingPush(true);
+    setPushNotice('');
+    try {
+      await onDisableBrowserPush();
+      setPushNoticeTone('info');
+      setPushNotice('Browser push notifications disabled. In-app reminders remain controlled below.');
+      const refreshedStatus = await getBrowserPushSupportStatus();
+      setBrowserPushStatus(refreshedStatus);
+    } catch (err) {
+      setPushNoticeTone('error');
+      setPushNotice(
+        err instanceof Error ? err.message : 'Could not disable browser push notifications.'
+      );
+    } finally {
+      setIsUpdatingPush(false);
+    }
+  };
+
+  const handleSendTestPushClick = async () => {
+    if (!onSendTestPush) return;
+    setIsSendingTestPush(true);
+    setPushNotice('');
+    try {
+      const res = await onSendTestPush();
+      setPushNoticeTone('success');
+      setPushNotice(
+        `Test notification dispatched to ${res.sentCount} browser ${
+          res.sentCount === 1 ? 'device' : 'devices'
+        }.`
+      );
+    } catch (err) {
+      setPushNoticeTone('error');
+      setPushNotice(
+        err instanceof Error ? err.message : 'Could not deliver test push notification.'
+      );
+    } finally {
+      setIsSendingTestPush(false);
+    }
+  };
+
+  const handlePasswordChange = async (e: React.FormEvent) => {
     e.preventDefault();
+    setPasswordSuccess(false);
+    setPasswordError('');
+
     if (!currentPass || !newPass) {
       setPasswordError('Please fill in both current and new passwords.');
       return;
     }
-    if (newPass.length < 8) {
-      setPasswordError('New password must be at least 8 characters long.');
+    const passwordValidationErr = validatePasswordStrength(newPass);
+    if (passwordValidationErr) {
+      setPasswordError(passwordValidationErr);
       return;
     }
     if (newPass !== confirmPass) {
@@ -56,12 +324,44 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
       return;
     }
 
-    setPasswordError('');
-    setPasswordSuccess(true);
-    setCurrentPass('');
-    setNewPass('');
-    setConfirmPass('');
-    setTimeout(() => setPasswordSuccess(false), 3000);
+    if (!isAuthenticated) {
+      setPasswordError('Please sign in with your Skillora account to update your password.');
+      return;
+    }
+
+    setIsUpdatingPassword(true);
+
+    try {
+      const supabase = await getSupabaseClient();
+      const { error: verifyError } = await supabase.auth.signInWithPassword({
+        email: user.email,
+        password: currentPass,
+      });
+
+      if (verifyError) {
+        setPasswordError('Current password is incorrect. Please try again.');
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: newPass,
+      });
+
+      if (updateError) {
+        setPasswordError(formatAuthError(updateError));
+        return;
+      }
+
+      setPasswordSuccess(true);
+      setCurrentPass('');
+      setNewPass('');
+      setConfirmPass('');
+      setTimeout(() => setPasswordSuccess(false), 4000);
+    } catch (err) {
+      setPasswordError(formatAuthError(err));
+    } finally {
+      setIsUpdatingPassword(false);
+    }
   };
 
   const inputClass =
@@ -81,6 +381,31 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
         </div>
       )}
 
+      {settingsError && (
+        <div className="p-4 rounded-[20px] bg-[#FCEAE5] border border-[#F3C5BA] text-[#8D3E32] text-xs space-y-1.5">
+          <div className="flex items-center justify-between gap-2 font-bold">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-[#C25E4D] shrink-0" />
+              <span>{settingsError}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setSettingsError('');
+                setSettingsDiagnostic('');
+              }}
+            >
+              <X className="w-4 h-4 text-[#8D3E32]" />
+            </button>
+          </div>
+          {import.meta.env.DEV && settingsDiagnostic && (
+            <p className="text-[11px] font-mono bg-[#FFFCFA]/70 border border-[#F3C5BA] rounded-[10px] px-3 py-1.5 text-[#7A3227] break-all">
+              {settingsDiagnostic}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="pastel-card p-6 sm:p-8 flex items-center gap-4">
         <ClayIconBadge variant="lavender" size="lg">
@@ -88,7 +413,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
         </ClayIconBadge>
         <div>
           <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#343047] tracking-tight">
-            Account & Learning Settings
+            Account &amp; Learning Settings
           </h1>
           <p className="text-xs sm:text-sm text-[#8B8295] mt-0.5">
             Personalize your study pace, notifications, and account preferences.
@@ -106,7 +431,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
         ].map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as any)}
+            onClick={() => setActiveTab(tab.id as SettingsTabId)}
             className={`px-4 py-1.5 text-xs font-bold rounded-full transition-colors ${
               activeTab === tab.id
                 ? 'bg-[#A78BCE] text-white shadow-xs'
@@ -161,18 +486,34 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
 
               <div>
                 <label className="block text-xs font-bold text-[#343047] mb-1">Timezone</label>
-                <select className={inputClass}>
-                  <option>Pacific Standard Time (UTC-8)</option>
-                  <option>Eastern Standard Time (UTC-5)</option>
-                  <option>Central European Time (UTC+1)</option>
-                  <option>Singapore Standard Time (UTC+8)</option>
+                <select
+                  value={timezone}
+                  onChange={(e) => setTimezone(e.target.value)}
+                  className={inputClass}
+                >
+                  {timezoneOptions.map((tz) => (
+                    <option key={tz} value={tz}>
+                      {tz}
+                    </option>
+                  ))}
                 </select>
               </div>
             </div>
 
             <div className="pt-4 border-t border-[#EEE6E5] flex justify-end">
-              <button type="submit" className="clay-button-primary px-5 py-2.5 text-xs font-bold">
-                Save Personal Info
+              <button
+                type="submit"
+                disabled={isSavingSettings}
+                className="clay-button-primary px-5 py-2.5 text-xs font-bold flex items-center gap-2 disabled:opacity-70"
+              >
+                {isSavingSettings ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Save Personal Info</span>
+                )}
               </button>
             </div>
           </form>
@@ -183,7 +524,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
       {activeTab === 'learning' && (
         <div className="pastel-card p-6 sm:p-8 space-y-6">
           <h2 className="font-display text-base font-extrabold text-[#343047]">
-            Learning Habits & Goals
+            Learning Habits &amp; Goals
           </h2>
 
           <form onSubmit={handleSaveSettings} className="space-y-6">
@@ -231,55 +572,283 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
             </div>
 
             <div className="pt-4 border-t border-[#EEE6E5] flex justify-end">
-              <button type="submit" className="clay-button-primary px-5 py-2.5 text-xs font-bold">
-                Save Learning Preferences
+              <button
+                type="submit"
+                disabled={isSavingSettings}
+                className="clay-button-primary px-5 py-2.5 text-xs font-bold flex items-center gap-2 disabled:opacity-70"
+              >
+                {isSavingSettings ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : (
+                  <span>Save Learning Preferences</span>
+                )}
               </button>
             </div>
           </form>
         </div>
       )}
 
-      {/* TAB 3 */}
+      {/* TAB 3: Notifications & Web Push */}
       {activeTab === 'notifications' && (
         <div className="pastel-card p-6 sm:p-8 space-y-6">
           <div>
             <h2 className="font-display text-base font-extrabold text-[#343047]">
-              Notification Channels
+              Smart Study Reminders &amp; External Notifications
             </h2>
             <p className="text-xs text-[#8B8295] mt-0.5">
-              Choose gentle reminders that keep your study rhythm steady.
+              Skillora only counts meaningful study activity (lessons, Knowledge Checks, diagnostics, or active study sessions) and stops reminders as soon as you resume learning.
             </p>
           </div>
 
+          {notificationSchemaMigrationRequired && (
+            <div className="p-3.5 rounded-[16px] bg-[#FFF1D6] border border-[#F3DFB4] text-[#7A5720] text-xs flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Supabase Notification Tables Pending Migration</p>
+                <p className="text-[11px] mt-0.5">
+                  Preferences are currently stored locally in this browser. Apply{' '}
+                  <code className="font-mono">supabase/migrations/20261118_notifications_and_push.sql</code>{' '}
+                  in Supabase to enable cross-device sync and push subscriptions.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* External Browser Push Notification Box */}
+          <div className="p-4 sm:p-5 rounded-[20px] bg-[#F6F1FC] border border-[#E2D6F5] space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <ClayIconBadge variant="lavender" size="md">
+                  {basePrefs.pushEnabled && pushSubscriptionActive ? (
+                    <BellRing className="w-5 h-5" />
+                  ) : (
+                    <BellOff className="w-5 h-5" />
+                  )}
+                </ClayIconBadge>
+                <div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h3 className="font-display text-sm font-extrabold text-[#343047]">
+                      Browser Push Notifications (Outside Website)
+                    </h3>
+                    <span
+                      className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                        basePrefs.pushEnabled && pushSubscriptionActive
+                          ? 'bg-[#DCECD9] text-[#2D4D33]'
+                          : browserPushStatus.permission === 'denied'
+                          ? 'bg-[#FCEAE5] text-[#8D3E32]'
+                          : 'bg-[#FFFCFA] text-[#6F4FA8] border border-[#E2D6F5]'
+                      }`}
+                    >
+                      {basePrefs.pushEnabled && pushSubscriptionActive
+                        ? 'Enabled'
+                        : browserPushStatus.permission === 'denied'
+                        ? 'Blocked in Browser'
+                        : browserPushStatus.supported
+                        ? 'Not Enabled'
+                        : 'Unsupported'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-[#5D5470] mt-1 leading-relaxed">
+                    Receive inactivity reminders in your OS/browser notification tray even when Skillora is closed. Permission is only requested when you click Enable below.
+                  </p>
+                  {!pushConfig.pushConfigured && (
+                    <p className="text-[11px] text-[#855C1C] font-semibold mt-1">
+                      Server Web Push VAPID keys are not configured on this server yet; in-app reminders remain fully active.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                {basePrefs.pushEnabled && pushSubscriptionActive ? (
+                  <>
+                    {pushConfig.pushConfigured && onSendTestPush && (
+                      <button
+                        type="button"
+                        onClick={handleSendTestPushClick}
+                        disabled={isSendingTestPush}
+                        className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8] flex items-center gap-1.5 disabled:opacity-60"
+                      >
+                        {isSendingTestPush ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Send className="w-3.5 h-3.5" />
+                        )}
+                        <span>Test Push</span>
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={handleDisableBrowserPushClick}
+                      disabled={isUpdatingPush}
+                      className="px-3.5 py-2 rounded-[14px] bg-[#FFFCFA] border border-[#E2D6F5] text-xs font-bold text-[#8D3E32] hover:bg-[#FCEAE5] transition-colors disabled:opacity-60"
+                    >
+                      {isUpdatingPush ? 'Updating...' : 'Disable'}
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={handleEnableBrowserPushClick}
+                    disabled={isUpdatingPush || !isAuthenticated || !browserPushStatus.supported}
+                    className="clay-button-primary px-4 py-2 text-xs font-bold flex items-center gap-1.5 disabled:opacity-60"
+                  >
+                    {isUpdatingPush ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <BellRing className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {isAuthenticated ? 'Enable Browser Notifications' : 'Sign In to Enable'}
+                    </span>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {pushNotice && (
+              <div
+                className={`p-3 rounded-[14px] text-[11px] font-semibold ${
+                  pushNoticeTone === 'success'
+                    ? 'bg-[#DCECD9] text-[#2D4D33]'
+                    : pushNoticeTone === 'error'
+                    ? 'bg-[#FCEAE5] text-[#8D3E32]'
+                    : 'bg-[#FFFCFA] text-[#5D5470] border border-[#E2D6F5]'
+                }`}
+              >
+                {pushNotice}
+              </div>
+            )}
+          </div>
+
+          {/* Reminder Schedule & Timezone */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-bold text-[#343047] mb-1">
+                <Clock className="w-3.5 h-3.5 text-[#8E6EC8]" />
+                <span>Preferred Reminder Time</span>
+              </label>
+              <input
+                type="time"
+                value={preferredTime}
+                onChange={(e) => setPreferredTime(e.target.value)}
+                className={inputClass}
+              />
+              <p className="text-[10px] text-[#8B8295] mt-1">
+                Scheduled reminders wait until this local time in your timezone.
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-1.5 text-xs font-bold text-[#343047] mb-1">
+                <Globe className="w-3.5 h-3.5 text-[#8E6EC8]" />
+                <span>Reminder Timezone</span>
+              </label>
+              <select
+                value={timezone}
+                onChange={(e) => setTimezone(e.target.value)}
+                className={inputClass}
+              >
+                {timezoneOptions.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
+                ))}
+              </select>
+              <p className="text-[10px] text-[#8B8295] mt-1">
+                Used for 1-day, 2–3 day, and 7-day inactivity &amp; streak calculations.
+              </p>
+            </div>
+          </div>
+
+          {/* Pause Reminders Controls */}
+          <div className="p-4 rounded-[18px] bg-[#FAF6F2] border border-[#EEE6E5] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div>
+              <p className="font-display text-xs font-extrabold text-[#343047] flex items-center gap-1.5">
+                {isPausedNow ? (
+                  <PauseCircle className="w-4 h-4 text-[#C25E4D]" />
+                ) : (
+                  <PlayCircle className="w-4 h-4 text-[#4B8B59]" />
+                )}
+                <span>
+                  {isPausedNow
+                    ? basePrefs.paused
+                      ? 'Notifications Paused Indefinitely'
+                      : `Notifications Paused Until ${new Date(
+                          basePrefs.pausedUntil ?? ''
+                        ).toLocaleString()}`
+                    : 'Notifications Active'}
+                </span>
+              </p>
+              <p className="text-[11px] text-[#8B8295] mt-0.5">
+                Need a break? Pause both browser push and in-app reminders temporarily.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {isPausedNow ? (
+                <button
+                  type="button"
+                  onClick={() => onResumeNotifications?.()}
+                  className="clay-button-primary px-3.5 py-1.5 text-[11px] font-bold"
+                >
+                  Resume Reminders
+                </button>
+              ) : (
+                (['24h', '3d', '7d', 'indefinite'] as const).map((dur) => (
+                  <button
+                    key={dur}
+                    type="button"
+                    onClick={() => onPauseNotifications?.(dur)}
+                    className="px-2.5 py-1.5 rounded-[12px] bg-[#FFFCFA] border border-[#EEE6E5] text-[11px] font-bold text-[#5D5470] hover:bg-[#F0E9FA] hover:text-[#343047] transition-colors"
+                  >
+                    {dur === 'indefinite' ? 'Pause' : `Pause ${dur}`}
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+
+          {/* Channel Toggles */}
           <div className="space-y-3">
             {[
               {
+                id: 'in_app',
+                title: 'In-App Notifications & Fallback',
+                desc: 'Show reminders in your Skillora notification bell whenever external push is off or unavailable.',
+                checked: inAppEnabled,
+                setter: setInAppEnabled,
+              },
+              {
+                id: 'inactivity',
+                title: 'Smart Inactivity Nudges (1d / 2–3d / 7d)',
+                desc: 'Encouraging check-ins if you have not completed a lesson, quiz, or study session; stops once you resume.',
+                checked: inactivityReminders,
+                setter: setInactivityReminders,
+              },
+              {
                 id: 'streak',
                 title: 'Daily Streak Reminders',
-                desc: 'Friendly reminder at 6:00 PM if daily units are pending.',
+                desc: 'Friendly nudge before your daily study streak resets.',
                 checked: streakReminders,
                 setter: setStreakReminders,
               },
               {
                 id: 'digest',
                 title: 'Weekly Progress Digest',
-                desc: 'Sunday evening recap of your study hours and skill growth.',
+                desc: 'Weekly recap of study hours toward your weekly goal and completed stages.',
                 checked: weeklyDigest,
                 setter: setWeeklyDigest,
               },
               {
                 id: 'ai_alerts',
-                title: 'AI Curriculum Insights',
-                desc: 'Notifications when new practice exercises match your gaps.',
+                title: 'Knowledge Gap & Quiz Insights',
+                desc: 'Highlights concepts needing review after assessments and Knowledge Checks.',
                 checked: aiInsightAlerts,
                 setter: setAiInsightAlerts,
-              },
-              {
-                id: 'course_alerts',
-                title: 'New Course & Resource Releases',
-                desc: 'Updates when fresh resources match your Python Developer track.',
-                checked: newCourseAlerts,
-                setter: setNewCourseAlerts,
               },
             ].map((item) => (
               <div
@@ -310,13 +879,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
 
           <div className="pt-4 border-t border-[#EEE6E5] flex justify-end">
             <button
-              onClick={() => {
-                setSavedSuccess(true);
-                setTimeout(() => setSavedSuccess(false), 3000);
-              }}
-              className="clay-button-primary px-5 py-2.5 text-xs font-bold"
+              type="button"
+              onClick={handleSaveNotificationPrefs}
+              disabled={isSavingNotifs}
+              className="clay-button-primary px-5 py-2.5 text-xs font-bold flex items-center gap-2 disabled:opacity-70"
             >
-              Save Notification Preferences
+              {isSavingNotifs ? (
+                <>
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <span>Save Notification Preferences</span>
+              )}
             </button>
           </div>
         </div>
@@ -327,7 +902,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
         <div className="pastel-card p-6 sm:p-8 space-y-6">
           <div>
             <h2 className="font-display text-base font-extrabold text-[#343047]">
-              Password & Security
+              Password &amp; Security
             </h2>
             <p className="text-xs text-[#8B8295] mt-0.5">
               Keep your account protected with a strong password.
@@ -364,15 +939,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
 
             <div>
               <label className="block text-xs font-bold text-[#343047] mb-1">
-                New Password (min 8 chars)
+                New Password (min. 8 characters)
               </label>
               <input
                 type="password"
                 value={newPass}
                 onChange={(e) => setNewPass(e.target.value)}
-                placeholder="••••••••••••"
+                minLength={MIN_PASSWORD_LENGTH}
+                placeholder="Min. 8 characters"
                 className={inputClass}
               />
+              <p className="text-[11px] text-[#8B8295] mt-1">
+                {PASSWORD_MIN_LENGTH_ERROR}
+              </p>
             </div>
 
             <div>
@@ -389,8 +968,19 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ user, onUpdateUser }
             </div>
 
             <div className="pt-2">
-              <button type="submit" className="clay-button-primary px-5 py-2.5 text-xs font-bold">
-                Update Password
+              <button
+                type="submit"
+                disabled={isUpdatingPassword}
+                className="clay-button-primary px-5 py-2.5 text-xs font-bold flex items-center gap-2 disabled:opacity-70"
+              >
+                {isUpdatingPassword ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Updating...</span>
+                  </>
+                ) : (
+                  <span>Update Password</span>
+                )}
               </button>
             </div>
           </form>

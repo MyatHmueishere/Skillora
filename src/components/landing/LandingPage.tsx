@@ -21,17 +21,28 @@ import {
   BloomingCactus3D,
 } from '../common/PastelIllustrations';
 
+import { AppView } from '../../types';
+
 interface LandingPageProps {
   onGetStarted: () => void;
   onLogin: () => void;
   onExploreDashboard: () => void;
+  onExploreView?: (view: AppView) => void;
 }
 
 export const LandingPage: React.FC<LandingPageProps> = ({
   onGetStarted,
   onLogin,
   onExploreDashboard,
+  onExploreView,
 }) => {
+  const navigatePreview = (view: AppView) => {
+    if (onExploreView) {
+      onExploreView(view);
+      return;
+    }
+    onExploreDashboard();
+  };
   const scrollToSection = (id: string) => {
     const el = document.getElementById(id);
     if (el) {
@@ -124,7 +135,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                   onClick={onExploreDashboard}
                   className="clay-button-soft px-6 py-3.5 text-sm font-bold flex items-center justify-center gap-2"
                 >
-                  <span>Explore Live Prototype</span>
+                  <span>Preview Dashboard</span>
                   <ChevronRight className="w-4 h-4 text-[#8B8295]" />
                 </button>
               </div>
@@ -136,7 +147,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[#69A878]" />
-                  <span>6-Stage Roadmaps</span>
+                  <span>Personalized Roadmaps</span>
                 </div>
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="w-4 h-4 text-[#69A878]" />
@@ -233,10 +244,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 Diagnostic Skill Assessments
               </h3>
               <p className="text-xs sm:text-sm text-[#635972] leading-relaxed">
-                Evaluate your mastery in Python, Data Structures, and SQL. Instant scoring highlights your strengths and exact areas for growth.
+                Evaluate your mastery across 10+ domains including Python, Data Structures, SQL, AI &amp; Data Science, Design, Business, and Cybersecurity.
               </p>
               <button
-                onClick={onExploreDashboard}
+                onClick={() => navigatePreview('assessment')}
                 className="text-xs font-bold text-[#7A58B5] flex items-center gap-1 hover:underline"
               >
                 <span>Try a diagnostic test</span>
@@ -249,13 +260,13 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 <Compass className="w-6 h-6" />
               </ClayIconBadge>
               <h3 className="font-display text-lg font-extrabold text-[#343047]">
-                Personalized 6-Stage Roadmap
+                Personalized Learning Roadmaps
               </h3>
               <p className="text-xs sm:text-sm text-[#6F5753] leading-relaxed">
-                Follow a curated multi-stage pathway with interactive lessons, real-time progress markers, and milestone projects.
+                Follow an AI-tailored multi-stage pathway with interactive lessons, knowledge checks, and real-time progress tracking built around your goals.
               </p>
               <button
-                onClick={onExploreDashboard}
+                onClick={() => navigatePreview('roadmap')}
                 className="text-xs font-bold text-[#B86352] flex items-center gap-1 hover:underline"
               >
                 <span>Explore roadmap stages</span>
@@ -271,10 +282,10 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 AI Study Companion
               </h3>
               <p className="text-xs sm:text-sm text-[#705D38] leading-relaxed">
-                Ask your friendly AI tutor to explain tricky Python functions, generate a 14-day study plan, or review weak spots anytime.
+                Ask your personalized AI study companion to simplify tricky concepts, review assessment knowledge gaps, or walk through your current lesson anytime.
               </p>
               <button
-                onClick={onExploreDashboard}
+                onClick={() => navigatePreview('assistant')}
                 className="text-xs font-bold text-[#9C6F23] flex items-center gap-1 hover:underline"
               >
                 <span>Meet your AI tutor</span>
@@ -309,7 +320,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               {
                 step: '02',
                 title: 'Tailored Roadmap',
-                desc: 'Get a personalized 6-stage learning plan built around your career goal.',
+                desc: 'Get a personalized multi-stage learning plan built around your career goal.',
                 icon: <Layers className="w-5 h-5" />,
                 variant: 'peach' as const,
               },
@@ -351,14 +362,17 @@ export const LandingPage: React.FC<LandingPageProps> = ({
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
             <div className="lg:col-span-5 space-y-5">
               <BooksTrophy3D className="w-28 h-24" />
+              <span className="inline-block text-xs font-bold uppercase tracking-wider text-[#8E6EC8]">
+                Sample Learning Path Preview
+              </span>
               <h2 className="font-display text-3xl sm:text-4xl font-extrabold text-[#343047] tracking-tight">
                 "Become a Python Developer" Learning Journey
               </h2>
               <p className="text-sm text-[#8B8295] leading-relaxed">
-                Every stage connects clearly from fundamentals to real-world FastAPI projects — complete with estimated timelines and interactive checkboxes.
+                Every stage connects clearly from fundamentals to real-world FastAPI projects — or generate your own custom roadmap for AI, Data Science, Design, Business, and more.
               </p>
               <button
-                onClick={onExploreDashboard}
+                onClick={() => navigatePreview('roadmap')}
                 className="clay-button-primary px-6 py-3 text-xs font-bold inline-flex items-center gap-2"
               >
                 <span>Preview Full Roadmap</span>
@@ -416,7 +430,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             {[
               {
                 quote: "Skillora's diagnostic showed me I already knew Python syntax but needed work on data structures. It saved me weeks of studying.",
-                name: 'Alex Chen',
+                name: 'Sophia Martinez',
                 role: 'CS Senior, University of Washington',
                 tint: 'bg-[#F0E9FA]/50',
               },
@@ -427,7 +441,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
                 tint: 'bg-[#FCEAE5]/50',
               },
               {
-                quote: 'Having a clear 6-stage roadmap plus an instant AI tutor gave me the structure I needed to stay consistent for 42 days.',
+                quote: 'Having a clear structured roadmap plus an instant AI tutor gave me the guidance I needed to stay consistent every week.',
                 name: 'David Okafor',
                 role: 'Recent Engineering Graduate',
                 tint: 'bg-[#DCECD9]/50',
@@ -480,7 +494,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
               onClick={onExploreDashboard}
               className="w-full sm:w-auto clay-button-soft px-6 py-3.5 text-xs font-bold"
             >
-              View Dashboard
+              Preview Dashboard
             </button>
           </div>
         </div>
@@ -498,7 +512,9 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <button onClick={() => scrollToSection('features')} className="hover:text-[#343047]">Features</button>
             <button onClick={() => scrollToSection('how-it-works')} className="hover:text-[#343047]">How It Works</button>
             <button onClick={() => scrollToSection('curriculum')} className="hover:text-[#343047]">Roadmaps</button>
+            <button onClick={() => scrollToSection('testimonials')} className="hover:text-[#343047]">Student Stories</button>
             <button onClick={onLogin} className="hover:text-[#343047]">Sign In</button>
+            <button onClick={onGetStarted} className="text-[#8E6EC8] hover:text-[#343047]">Get Started</button>
           </div>
 
           <p className="text-xs text-[#8B8295]">

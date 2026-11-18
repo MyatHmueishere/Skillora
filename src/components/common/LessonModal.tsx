@@ -226,7 +226,9 @@ export const LessonModal: React.FC<LessonModalProps> = ({
                 <button
                   onClick={() => {
                     onClose();
-                    onOpenAssistant(course.title);
+                    onOpenAssistant(
+                      `Explain "${course.title}" (${course.category}, ${course.difficulty}) and help me practice its key concepts.`
+                    );
                   }}
                   className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-[16px] bg-[#F0E9FA] text-[#6D50A3] hover:bg-[#E5DAF6] text-xs font-bold transition-colors"
                 >

@@ -1,5 +1,6 @@
 import React from 'react';
-import skilloraLogo from '../../assets/images/skillora-logo.png';
+export const SKILLORA_LOGO_SRC = '/assets/skillora-logo.png';
+export const SKILLORA_WELCOME_MASCOT_SRC = '/assets/skillora-welcome-mascot.png';
 
 interface LogoProps {
   className?: string;
@@ -17,10 +18,10 @@ export const Logo: React.FC<LogoProps> = ({
   // Exact sizing per brand specification:
   // sm: 36px, md (Sidebar): 44px, lg (Landing Header): 48px, xl (Auth & Onboarding): 64px
   const badgeSizes = {
-    sm: 'w-9 h-9 rounded-[10px]',
-    md: 'w-11 h-11 rounded-[12px]',
-    lg: 'w-12 h-12 rounded-[14px]',
-    xl: 'w-14 h-14 sm:w-16 sm:h-16 rounded-[18px]',
+    sm: 'w-9 h-9',
+    md: 'w-11 h-11',
+    lg: 'w-12 h-12',
+    xl: 'w-14 h-14 sm:w-16 sm:h-16',
   };
 
   const textSizes = {
@@ -33,9 +34,9 @@ export const Logo: React.FC<LogoProps> = ({
   return (
     <div className={`flex items-center gap-3 ${className}`}>
       <img
-        src={skilloraLogo}
+        src={SKILLORA_LOGO_SRC}
         alt="Skillora Logo"
-        className={`${badgeSizes[size]} object-contain shrink-0 select-none`}
+        className={`${badgeSizes[size]} object-contain shrink-0 select-none bg-transparent`}
       />
 
       <div className="flex flex-col">

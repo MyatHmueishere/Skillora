@@ -1,19 +1,23 @@
 import React, { useState } from 'react';
-import { Bell, CheckCheck, Trash2, Award, Sparkles, BookOpen, Clock } from 'lucide-react';
+import { Bell, CheckCheck, Trash2, Award, Sparkles, BookOpen, Clock, Settings } from 'lucide-react';
 import { NotificationItem, AppView } from '../../types';
 
 interface NotificationDropdownProps {
   notifications: NotificationItem[];
   onMarkAllAsRead: () => void;
+  onMarkNotificationRead?: (id: string) => void;
   onClearNotifications: () => void;
   onNavigate: (view: AppView) => void;
+  onOpenNotificationSettings?: () => void;
 }
 
 export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
   notifications,
   onMarkAllAsRead,
+  onMarkNotificationRead,
   onClearNotifications,
   onNavigate,
+  onOpenNotificationSettings,
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [filter, setFilter] = useState<'all' | 'unread'>('all');
@@ -52,8 +56,13 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
   };
 
   const handleNotificationClick = (item: NotificationItem) => {
+    onMarkNotificationRead?.(item.id);
     setIsOpen(false);
-    if (item.type === 'insight') {
+    if (item.id.startsWith('inactivity:') || item.id === 'start-daily-goal') {
+      onNavigate('roadmap');
+    } else if (item.id === 'profile-complete-nudge') {
+      onNavigate('profile');
+    } else if (item.type === 'insight') {
       onNavigate('assistant');
     } else if (item.type === 'achievement') {
       onNavigate('progress');
@@ -188,6 +197,25 @@ export const NotificationDropdown: React.FC<NotificationDropdownProps> = ({
                 ))
               )}
             </div>
+
+            {onOpenNotificationSettings && (
+              <div className="p-2.5 border-t border-[#EEE6E5] bg-[#FAF6F2]/70 flex items-center justify-between">
+                <span className="text-[10px] text-[#8B8295] font-medium px-1">
+                  Reminders &amp; browser alerts
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsOpen(false);
+                    onOpenNotificationSettings();
+                  }}
+                  className="px-2.5 py-1 rounded-xl bg-[#FFFCFA] border border-[#EEE6E5] text-[11px] font-bold text-[#6F4FA8] hover:bg-[#F0E9FA] transition-colors flex items-center gap-1"
+                >
+                  <Settings className="w-3 h-3" />
+                  <span>Preferences</span>
+                </button>
+              </div>
+            )}
           </div>
         </>
       )}

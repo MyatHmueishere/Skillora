@@ -1,113 +1,500 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
-  Search,
+  AlertCircle,
+  ArrowRight,
   BookOpen,
-  Bookmark,
-  BookmarkCheck,
-  Clock,
-  Play,
+  Compass,
+  ExternalLink,
   FileText,
-  Code,
+  GraduationCap,
   Layers,
+  Loader2,
+  Play,
+  PlayCircle,
   Sparkles,
+  Target,
+  UserCheck,
   X,
+  Youtube,
 } from 'lucide-react';
-import { ResourceItem, AppView } from '../../types';
 import {
-  ClayIconBadge,
+  AppView,
+  ExploreResourceCardItem,
+  ExploreResourceRelationshipTier,
+  ExploreResourcesPayload,
+  ResourceItem,
+} from '../../types';
+import {
   ClayColorVariant,
+  ClayIconBadge,
   PottedPlant3D,
 } from '../common/PastelIllustrations';
+import {
+  ExploreResourcesClientError,
+  fetchExploreResources,
+  getCachedExploreResources,
+} from '../../lib/exploreResources';
+
+type ExploreTabKey = 'for_you' | 'all' | 'videos' | 'documentation' | 'courses';
 
 interface ResourcesViewProps {
-  resources: ResourceItem[];
-  onToggleSave: (id: string) => void;
+  resources?: ResourceItem[];
+  onToggleSave?: (id: string) => void;
   onNavigate: (view: AppView) => void;
   initialSearch?: string;
+  onClearSearch?: () => void;
+  authUserId?: string | null;
+  personalizationSignature?: string;
+}
+
+const RELATIONSHIP_BADGE_STYLES: Record<
+  ExploreResourceRelationshipTier,
+  { bg: string; text: string; border: string; fallbackLabel: string }
+> = {
+  direct: {
+    bg: 'bg-[#DCECD9]',
+    text: 'text-[#2F5B37]',
+    border: 'border-[#BDD8B8]',
+    fallbackLabel: 'Directly relevant',
+  },
+  supporting: {
+    bg: 'bg-[#EDE5FA]',
+    text: 'text-[#5E3F99]',
+    border: 'border-[#D7C6F3]',
+    fallbackLabel: 'Supporting interest',
+  },
+  related: {
+    bg: 'bg-[#FFF1D6]',
+    text: 'text-[#7A5720]',
+    border: 'border-[#EFD7A3]',
+    fallbackLabel: 'Related discovery',
+  },
+};
+
+function getPrimaryDirectionSourceLabel(
+  source: ExploreResourcesPayload['personalizationSummary']['primaryDirectionSource']
+): string {
+  switch (source) {
+    case 'explicit':
+      return 'Explicit Focus';
+    case 'active_roadmap':
+      return 'From Active Roadmap';
+    case 'profile_goal':
+      return 'From Profile Goal';
+    default:
+      return 'Not Set';
+  }
 }
 
 export const ResourcesView: React.FC<ResourcesViewProps> = ({
-  resources,
-  onToggleSave,
   onNavigate,
   initialSearch = '',
+  onClearSearch,
+  authUserId = null,
+  personalizationSignature = '',
 }) => {
-  const [search, setSearch] = useState(initialSearch);
-  const [selectedCategory, setSelectedCategory] = useState<string>('All');
-  const [selectedDifficulty, setSelectedDifficulty] = useState<string>('All');
-  const [selectedType, setSelectedType] = useState<string>('All');
-  const [activeResourceModal, setActiveResourceModal] = useState<ResourceItem | null>(null);
+  const [activeTab, setActiveTab] = useState<ExploreTabKey>('for_you');
+  const [data, setData] = useState<ExploreResourcesPayload | null>(() =>
+    getCachedExploreResources(authUserId)
+  );
+  const [loading, setLoading] = useState<boolean>(
+    () => !getCachedExploreResources(authUserId)
+  );
+  const [error, setError] = useState<string>('');
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+
+  const activeUserRef = useRef<string | null>(authUserId);
+  activeUserRef.current = authUserId;
+  const lastFetchedSignatureRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (initialSearch !== undefined) {
-      setSearch(initialSearch);
+    let cancelled = false;
+    const expectedUserId = authUserId ?? null;
+    const currentSignature = `${expectedUserId ?? ''}|${personalizationSignature}`;
+    const shouldForceRefresh =
+      lastFetchedSignatureRef.current !== null &&
+      lastFetchedSignatureRef.current !== currentSignature;
+
+    lastFetchedSignatureRef.current = currentSignature;
+    const cachedHit = !shouldForceRefresh
+      ? getCachedExploreResources(expectedUserId)
+      : null;
+
+    if (cachedHit) {
+      setData(cachedHit);
+      setLoading(false);
+      setError('');
+      setPlayingVideoId(null);
+      return () => {
+        cancelled = true;
+      };
     }
-  }, [initialSearch]);
 
-  const categories = ['All', 'Programming', 'Data Science', 'AI & ML', 'Web Development', 'Career Prep'];
-  const difficulties = ['All', 'Beginner', 'Intermediate', 'Advanced'];
-  const types = ['All', 'Course', 'Video Tutorial', 'Article', 'Programming Exercise'];
+    setLoading(true);
+    setError('');
+    setPlayingVideoId(null);
 
-  const filteredResources = resources.filter((res) => {
-    const matchesSearch =
-      search === '' ||
-      res.title.toLowerCase().includes(search.toLowerCase()) ||
-      res.description.toLowerCase().includes(search.toLowerCase()) ||
-      res.category.toLowerCase().includes(search.toLowerCase());
+    fetchExploreResources({
+      userId: expectedUserId,
+      forceRefresh: shouldForceRefresh,
+    })
+      .then((payload) => {
+        if (!cancelled && (activeUserRef.current ?? null) === expectedUserId) {
+          setData(payload);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled && (activeUserRef.current ?? null) === expectedUserId) {
+          if (err instanceof ExploreResourcesClientError) {
+            setError(err.message);
+          } else if (err instanceof Error) {
+            setError(err.message);
+          } else {
+            setError('Unable to load Explore Resources right now.');
+          }
+        }
+      })
+      .finally(() => {
+        if (!cancelled && (activeUserRef.current ?? null) === expectedUserId) {
+          setLoading(false);
+        }
+      });
 
-    const matchesCategory = selectedCategory === 'All' || res.category === selectedCategory;
-    const matchesDifficulty = selectedDifficulty === 'All' || res.difficulty === selectedDifficulty;
-    const matchesType = selectedType === 'All' || res.type === selectedType;
+    return () => {
+      cancelled = true;
+    };
+  }, [authUserId, personalizationSignature]);
 
-    return matchesSearch && matchesCategory && matchesDifficulty && matchesType;
-  });
+  useEffect(() => {
+    setPlayingVideoId(null);
+  }, [activeTab]);
 
-  const getTypeIcon = (type: ResourceItem['type']) => {
-    switch (type) {
-      case 'Video Tutorial':
-        return <Play className="w-5 h-5" />;
-      case 'Article':
-        return <FileText className="w-5 h-5" />;
-      case 'Programming Exercise':
-        return <Code className="w-5 h-5" />;
-      case 'Course':
+  const searchQuery = initialSearch.trim().toLowerCase();
+
+  const matchesSearch = (item: ExploreResourceCardItem, query: string): boolean => {
+    if (!query) return true;
+    return (
+      item.title.toLowerCase().includes(query) ||
+      item.description.toLowerCase().includes(query) ||
+      item.provider.toLowerCase().includes(query) ||
+      item.type.toLowerCase().includes(query) ||
+      item.subjectLabel.toLowerCase().includes(query)
+    );
+  };
+
+  const filteredForYou = useMemo(() => {
+    if (!data) return [];
+    if (!searchQuery) return data.forYou;
+    return data.forYou.filter((item) => matchesSearch(item, searchQuery));
+  }, [data, searchQuery]);
+
+  const filteredContinueLearning = useMemo(() => {
+    if (!data) return [];
+    const list = data.continueLearning ?? [];
+    if (!searchQuery) return list;
+    return list.filter((item) => matchesSearch(item, searchQuery));
+  }, [data, searchQuery]);
+
+  const discoverSearchFallback = useMemo(() => {
+    if (!data || !searchQuery || activeTab !== 'for_you') return [];
+    if (filteredForYou.length > 0 || filteredContinueLearning.length > 0) return [];
+    return data.all.filter((item) => matchesSearch(item, searchQuery));
+  }, [data, searchQuery, activeTab, filteredForYou.length, filteredContinueLearning.length]);
+
+  const rawTabItems = useMemo<ExploreResourceCardItem[]>(() => {
+    if (!data) return [];
+    switch (activeTab) {
+      case 'for_you':
+        return data.forYou;
+      case 'all':
+        return data.all;
+      case 'videos':
+        return data.videos;
+      case 'documentation':
+        return data.documentation;
+      case 'courses':
+        return data.courses;
       default:
-        return <Layers className="w-5 h-5" />;
+        return data.all;
     }
-  };
+  }, [data, activeTab]);
 
-  const getCategoryTheme = (
-    cat: ResourceItem['category']
-  ): { variant: ClayColorVariant; tint: string } => {
-    switch (cat) {
-      case 'Programming':
-        return { variant: 'lavender', tint: 'bg-[#F0E9FA]/75' };
-      case 'Data Science':
-        return { variant: 'mint', tint: 'bg-[#DCECD9]/65' };
-      case 'Web Development':
-        return { variant: 'peach', tint: 'bg-[#FCEAE5]/75' };
-      case 'AI & ML':
-        return { variant: 'pink', tint: 'bg-[#FBE6EC]/75' };
-      case 'Career Prep':
+  const visibleItems = useMemo(() => {
+    if (!searchQuery) return rawTabItems;
+    return rawTabItems.filter((item) => matchesSearch(item, searchQuery));
+  }, [rawTabItems, searchQuery]);
+
+  const searchMatchCount = useMemo(() => {
+    if (!searchQuery) return visibleItems.length;
+    if (activeTab === 'for_you') {
+      const uniqueIds = new Set([
+        ...filteredForYou.map((i) => i.id),
+        ...filteredContinueLearning.map((i) => i.id),
+      ]);
+      return uniqueIds.size > 0 ? uniqueIds.size : discoverSearchFallback.length;
+    }
+    return visibleItems.length;
+  }, [
+    searchQuery,
+    activeTab,
+    visibleItems.length,
+    filteredForYou,
+    filteredContinueLearning,
+    discoverSearchFallback.length,
+  ]);
+
+  const tabs: {
+    key: ExploreTabKey;
+    label: string;
+    count: number;
+    icon: React.ReactNode;
+    activeClass: string;
+  }[] = [
+    {
+      key: 'for_you',
+      label: 'For You',
+      count: data?.forYou.length ?? 0,
+      icon: <Sparkles className="w-3.5 h-3.5 shrink-0" />,
+      activeClass: 'bg-[#A78BCE] text-white shadow-xs',
+    },
+    {
+      key: 'all',
+      label: 'All',
+      count: data?.all.length ?? 0,
+      icon: <Compass className="w-3.5 h-3.5 shrink-0" />,
+      activeClass: 'bg-[#8E6EC8] text-white shadow-xs',
+    },
+    {
+      key: 'videos',
+      label: 'Videos',
+      count: data?.videos.length ?? 0,
+      icon: <Youtube className="w-3.5 h-3.5 shrink-0" />,
+      activeClass: 'bg-[#A78BCE] text-white shadow-xs',
+    },
+    {
+      key: 'documentation',
+      label: 'Documentation',
+      count: data?.documentation.length ?? 0,
+      icon: <FileText className="w-3.5 h-3.5 shrink-0" />,
+      activeClass: 'bg-[#73B082] text-white shadow-xs',
+    },
+    {
+      key: 'courses',
+      label: 'Courses',
+      count: data?.courses.length ?? 0,
+      icon: <GraduationCap className="w-3.5 h-3.5 shrink-0" />,
+      activeClass: 'bg-[#E58D7A] text-white shadow-xs',
+    },
+  ];
+
+  const getTabTheme = (
+    tabCategory: ExploreResourceCardItem['tabCategory']
+  ): {
+    variant: ClayColorVariant;
+    tint: string;
+    badgeText: string;
+    icon: React.ReactNode;
+  } => {
+    switch (tabCategory) {
+      case 'video':
+        return {
+          variant: 'lavender',
+          tint: 'bg-[#F3ECFC]/85',
+          badgeText: 'text-[#6F4FA8]',
+          icon: <Youtube className="w-5 h-5" />,
+        };
+      case 'documentation':
+        return {
+          variant: 'mint',
+          tint: 'bg-[#EEF7EE]/90',
+          badgeText: 'text-[#2F5B37]',
+          icon: <BookOpen className="w-5 h-5" />,
+        };
+      case 'course':
       default:
-        return { variant: 'yellow', tint: 'bg-[#FFF1D6]/75' };
+        return {
+          variant: 'peach',
+          tint: 'bg-[#FCEAE5]/80',
+          badgeText: 'text-[#9E4F3E]',
+          icon: <GraduationCap className="w-5 h-5" />,
+        };
     }
   };
 
-  const getDifficultyPill = (diff: ResourceItem['difficulty']) => {
-    switch (diff) {
-      case 'Beginner':
-        return 'bg-[#DCECD9] text-[#356640]';
-      case 'Intermediate':
-        return 'bg-[#F0E9FA] text-[#6B4FA1]';
-      case 'Advanced':
-        return 'bg-[#FCEAE5] text-[#9C5042]';
-    }
+  const renderResourceCard = (
+    item: ExploreResourceCardItem,
+    options?: { showRelationshipBadge?: boolean }
+  ) => {
+    const theme = getTabTheme(item.tabCategory);
+    const isVideo = item.tabCategory === 'video';
+    const canEmbedVideo = Boolean(
+      isVideo && item.embedAllowed && item.videoId && item.embedUrl
+    );
+    const isPlaying = Boolean(canEmbedVideo && playingVideoId === item.id);
+    const showRelBadge = Boolean(options?.showRelationshipBadge && item.relationshipTier);
+    const relStyle = item.relationshipTier
+      ? RELATIONSHIP_BADGE_STYLES[item.relationshipTier]
+      : null;
+
+    return (
+      <article
+        key={item.id}
+        className="pastel-card pastel-card-hover p-5 flex flex-col justify-between gap-4"
+      >
+        <div className="space-y-3.5">
+          {/* Video Embed or Thumbnail (verified YouTube videos) */}
+          {isVideo &&
+            (isPlaying && item.embedUrl ? (
+              <div className="space-y-2">
+                <div className="relative w-full aspect-video rounded-[18px] overflow-hidden border border-[#D8C9F2] bg-[#1F1B2E]">
+                  <iframe
+                    src={item.embedUrl}
+                    title={item.title}
+                    className="w-full h-full"
+                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                    allowFullScreen
+                  />
+                </div>
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => setPlayingVideoId(null)}
+                    className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-[#FFFCFA] border border-[#E2D6F5] text-[11px] font-bold text-[#6F4FA8] hover:bg-[#F0E9FA]"
+                  >
+                    <X className="w-3 h-3" />
+                    <span>Close Player</span>
+                  </button>
+                </div>
+              </div>
+            ) : item.thumbnailUrl ? (
+              <div className="relative w-full aspect-video rounded-[18px] overflow-hidden border border-[#E5DAF5] bg-[#EDE5F8] group">
+                <img
+                  src={item.thumbnailUrl}
+                  alt={`${item.title} thumbnail`}
+                  loading="lazy"
+                  referrerPolicy="no-referrer"
+                  className="w-full h-full object-cover"
+                />
+                <div className="absolute inset-0 bg-gradient-to-t from-[#2B263B]/45 via-transparent to-transparent" />
+                {canEmbedVideo && (
+                  <button
+                    type="button"
+                    onClick={() => setPlayingVideoId(item.id)}
+                    aria-label={`Play ${item.title}`}
+                    className="absolute inset-0 flex items-center justify-center group"
+                  >
+                    <span className="w-12 h-12 rounded-full bg-[#FFFCFA]/95 text-[#7B59B6] flex items-center justify-center shadow-lg transition-transform group-hover:scale-105">
+                      <Play className="w-5 h-5 fill-[#7B59B6] ml-0.5" />
+                    </span>
+                  </button>
+                )}
+              </div>
+            ) : null)}
+
+          {/* Resource Type & Subject Header */}
+          <div className={`p-3 rounded-[16px] ${theme.tint} flex items-center justify-between gap-2`}>
+            <div className="flex items-center gap-2.5 min-w-0">
+              <ClayIconBadge variant={theme.variant} size="sm">
+                {theme.icon}
+              </ClayIconBadge>
+              <div className="min-w-0">
+                <p className={`text-[11px] font-extrabold truncate ${theme.badgeText}`}>
+                  {item.type}
+                </p>
+                <p className="text-[11px] font-semibold text-[#5E5468] truncate">
+                  {item.subjectLabel}
+                </p>
+              </div>
+            </div>
+
+            {item.tabCategory === 'course' && item.pricing && (
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-extrabold shrink-0 ${
+                  item.pricing === 'Free'
+                    ? 'bg-[#DCECD9] text-[#2F5B37]'
+                    : 'bg-[#FFF1D6] text-[#7A5720]'
+                }`}
+              >
+                {item.pricing}
+              </span>
+            )}
+          </div>
+
+          {/* Relationship Tier Badge (For You / Continue Learning) */}
+          {showRelBadge && relStyle && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span
+                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold border ${relStyle.bg} ${relStyle.text} ${relStyle.border}`}
+              >
+                {item.relationshipLabel || relStyle.fallbackLabel}
+              </span>
+            </div>
+          )}
+
+          {/* Title & Short Description */}
+          <div className="space-y-1.5">
+            <h3 className="font-display text-sm sm:text-base font-extrabold text-[#343047] leading-snug">
+              {item.title}
+            </h3>
+            <p className="text-xs text-[#6B6178] leading-relaxed line-clamp-3">
+              {item.description}
+            </p>
+            {options?.showRelationshipBadge && item.matchReason && (
+              <p className="text-[11px] font-bold text-[#6F4FA8] pt-0.5">
+                {item.matchReason}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Provider & Actions */}
+        <div className="pt-3 border-t border-[#EEE6E5] flex items-center justify-between gap-2.5">
+          <div className="min-w-0">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-[#8B8295] block">
+              Provider
+            </span>
+            <span className="text-xs font-bold text-[#343047] truncate block">
+              {item.provider}
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {canEmbedVideo && (
+              <button
+                type="button"
+                onClick={() =>
+                  setPlayingVideoId((prev) => (prev === item.id ? null : item.id))
+                }
+                className="clay-button-soft px-3 py-2 text-xs font-bold text-[#6F4FA8] inline-flex items-center gap-1"
+              >
+                <PlayCircle className="w-3.5 h-3.5" />
+                <span>{isPlaying ? 'Hide' : 'Play'}</span>
+              </button>
+            )}
+            <a
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="clay-button-primary px-4 py-2 text-xs font-bold inline-flex items-center gap-1.5"
+            >
+              <span>Explore</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          </div>
+        </div>
+      </article>
+    );
   };
+
+  const summary = data?.personalizationSummary;
+  const supportingTags =
+    summary?.supportingInterests && summary.supportingInterests.length > 0
+      ? summary.supportingInterests
+      : summary?.interests ?? [];
 
   return (
     <div className="space-y-6 pb-8 animate-in fade-in duration-150">
-      {/* Discovery Space Header */}
+      {/* Discovery Header */}
       <div
         className="rounded-[26px] border border-[#D4E5D1] p-6 sm:p-8 flex flex-col md:flex-row md:items-center justify-between gap-6"
         style={{
@@ -119,305 +506,466 @@ export const ResourcesView: React.FC<ResourcesViewProps> = ({
           <PottedPlant3D className="w-20 h-24 hidden sm:block shrink-0" />
           <div className="space-y-1.5">
             <div className="inline-flex items-center gap-1.5 text-xs font-bold text-[#3C7347] bg-[#FFFCFA] px-3 py-1 rounded-full border border-[#D4E5D1]">
-              <BookOpen className="w-3.5 h-3.5 text-[#69A878]" />
-              <span>Creative Learning Library</span>
+              <Compass className="w-3.5 h-3.5 text-[#69A878]" />
+              <span>Focused Discovery Library</span>
             </div>
             <h1 className="font-display text-2xl sm:text-3xl font-extrabold text-[#343047] tracking-tight">
-              Explore Learning Resources
+              Explore Resources
             </h1>
-            <p className="text-xs sm:text-sm text-[#5E586B] max-w-xl leading-relaxed">
-              Curated courses, interactive coding sandboxes, technical articles, and walkthroughs tailored to your personalized learning path.
+            <p className="text-xs sm:text-sm text-[#5E586B] max-w-2xl leading-relaxed">
+              Verified educational videos, official documentation, and courses focused on your primary learning direction in For You, or discover freely across all subjects.
             </p>
           </div>
         </div>
-
-        <button
-          onClick={() => onNavigate('assistant')}
-          className="clay-button-primary px-5 py-2.5 text-xs font-bold flex items-center gap-2 shrink-0 self-start md:self-auto"
-        >
-          <Sparkles className="w-4 h-4" />
-          <span>Ask AI to Recommend</span>
-        </button>
       </div>
 
-      {/* Search & Filters Card */}
-      <div className="pastel-card p-5 space-y-4">
-        <div className="relative">
-          <Search className="w-4 h-4 text-[#8B8295] absolute left-4 top-1/2 -translate-y-1/2" />
-          <input
-            type="text"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search by topic, keyword, Python, FastAPI, SQL, algorithms..."
-            className="w-full pl-11 pr-4 py-2.5 text-xs bg-[#FAF6F2] border border-[#EEE6E5] rounded-full focus:bg-[#FFFCFA] focus:outline-none focus:ring-2 focus:ring-[#C9B7E8] transition-all text-[#343047] placeholder:text-[#A49BB0]"
-          />
-        </div>
-
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pt-1 border-t border-[#EEE6E5]">
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 lg:pb-0">
-            {categories.map((cat) => (
+      {/* Five Simple Horizontal Tabs */}
+      <div className="pastel-card p-3 sm:p-4 space-y-3">
+        <div
+          role="tablist"
+          aria-label="Explore Resources categories"
+          className="flex items-center gap-1.5 overflow-x-auto sm:grid sm:grid-cols-5 p-1.5 bg-[#FAF6F2] border border-[#EEE6E5] rounded-2xl"
+        >
+          {tabs.map((tab) => {
+            const isActive = activeTab === tab.key;
+            return (
               <button
-                key={cat}
-                onClick={() => setSelectedCategory(cat)}
-                className={`px-3.5 py-1.5 text-xs font-bold rounded-full transition-colors whitespace-nowrap ${
-                  selectedCategory === cat
-                    ? 'bg-[#A78BCE] text-white shadow-xs'
-                    : 'bg-[#FAF6F2] text-[#6B6178] hover:bg-[#F0E9FA] border border-[#EEE6E5]'
+                key={tab.key}
+                role="tab"
+                aria-selected={isActive}
+                type="button"
+                onClick={() => setActiveTab(tab.key)}
+                className={`min-w-[116px] sm:min-w-0 w-full px-3 py-2.5 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${
+                  isActive
+                    ? tab.activeClass
+                    : 'text-[#6B6178] hover:text-[#343047] hover:bg-[#FFFCFA]'
                 }`}
               >
-                {cat}
+                {tab.icon}
+                <span>{tab.label}</span>
+                {!loading && data && (
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] font-mono ${
+                      isActive
+                        ? 'bg-white/25 text-white'
+                        : 'bg-[#EEE6E5]/80 text-[#5E5468]'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                )}
               </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="flex items-center gap-2 text-xs text-[#6B6178]">
-              <span className="font-bold text-[#343047]">Difficulty:</span>
-              <select
-                value={selectedDifficulty}
-                onChange={(e) => setSelectedDifficulty(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-[#FAF6F2] border border-[#EEE6E5] rounded-full focus:outline-none focus:ring-2 focus:ring-[#C9B7E8] text-[#343047] font-semibold"
-              >
-                {difficulties.map((d) => (
-                  <option key={d} value={d}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="flex items-center gap-2 text-xs text-[#6B6178]">
-              <span className="font-bold text-[#343047]">Format:</span>
-              <select
-                value={selectedType}
-                onChange={(e) => setSelectedType(e.target.value)}
-                className="px-3 py-1.5 text-xs bg-[#FAF6F2] border border-[#EEE6E5] rounded-full focus:outline-none focus:ring-2 focus:ring-[#C9B7E8] text-[#343047] font-semibold"
-              >
-                {types.map((t) => (
-                  <option key={t} value={t}>
-                    {t}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Results Grid */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between text-xs text-[#8B8295] px-1">
-          <span>Showing {filteredResources.length} learning resources</span>
-          {(selectedCategory !== 'All' || selectedDifficulty !== 'All' || selectedType !== 'All' || search) && (
-            <button
-              onClick={() => {
-                setSearch('');
-                setSelectedCategory('All');
-                setSelectedDifficulty('All');
-                setSelectedType('All');
-              }}
-              className="text-[#8E6EC8] hover:underline font-bold"
-            >
-              Reset all filters
-            </button>
-          )}
+            );
+          })}
         </div>
 
-        {filteredResources.length === 0 ? (
-          <div className="pastel-card p-12 text-center space-y-3">
-            <div className="w-12 h-12 mx-auto rounded-2xl bg-[#F0E9FA] flex items-center justify-center text-[#A78BCE]">
-              <Search className="w-6 h-6" />
-            </div>
-            <h3 className="font-display text-base font-extrabold text-[#343047]">
-              No matching resources found
-            </h3>
-            <p className="text-xs text-[#8B8295] max-w-sm mx-auto">
-              Try adjusting your search keywords or resetting the category and difficulty filters.
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-            {filteredResources.map((res) => {
-              const theme = getCategoryTheme(res.category);
-              return (
-                <div
-                  key={res.id}
-                  className="pastel-card pastel-card-hover p-5 flex flex-col justify-between space-y-4"
-                >
-                  <div className="space-y-3.5">
-                    {/* Top Illustrated Pastel Strip */}
-                    <div
-                      className={`p-3.5 rounded-[18px] ${theme.tint} flex items-center justify-between`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <ClayIconBadge variant={theme.variant} size="md">
-                          {getTypeIcon(res.type)}
-                        </ClayIconBadge>
-                        <div>
-                          <p className="text-[11px] font-bold text-[#343047]">{res.category}</p>
-                          <p className="text-[10px] text-[#6B6178] font-medium">{res.type}</p>
-                        </div>
-                      </div>
-
-                      <button
-                        onClick={() => onToggleSave(res.id)}
-                        className={`p-2 rounded-full transition-colors ${
-                          res.saved
-                            ? 'bg-[#FFFCFA] text-[#8E6EC8] shadow-xs'
-                            : 'bg-[#FFFCFA]/60 text-[#8B8295] hover:bg-[#FFFCFA] hover:text-[#343047]'
-                        }`}
-                        title={res.saved ? 'Remove bookmark' : 'Bookmark resource'}
-                      >
-                        {res.saved ? (
-                          <BookmarkCheck className="w-4 h-4 fill-current" />
-                        ) : (
-                          <Bookmark className="w-4 h-4" />
-                        )}
-                      </button>
-                    </div>
-
-                    {/* Title & Metadata */}
-                    <div>
-                      <div className="flex items-center justify-between gap-2 mb-1.5">
-                        <span
-                          className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${getDifficultyPill(
-                            res.difficulty
-                          )}`}
-                        >
-                          {res.difficulty}
-                        </span>
-                        <span className="flex items-center gap-1 text-[11px] text-[#8B8295] font-mono">
-                          <Clock className="w-3 h-3" />
-                          {res.duration}
-                        </span>
-                      </div>
-
-                      <h3 className="font-display text-sm font-extrabold text-[#343047] leading-snug">
-                        {res.title}
-                      </h3>
-                    </div>
-
-                    <p className="text-xs text-[#6B6178] line-clamp-3 leading-relaxed">
-                      {res.description}
-                    </p>
-                  </div>
-
-                  {/* Card Footer */}
-                  <div className="pt-3 border-t border-[#EEE6E5] flex items-center justify-between gap-2">
-                    <span className="text-[11px] text-[#8B8295] truncate">
-                      By <span className="text-[#343047] font-semibold">{res.author}</span>
-                    </span>
-
-                    <button
-                      onClick={() => setActiveResourceModal(res)}
-                      className="clay-button-primary px-4 py-1.5 text-xs font-bold shrink-0"
-                    >
-                      Start Learning
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
+        {/* Optional active TopNavbar search indicator */}
+        {searchQuery && (
+          <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-[#F7F3FC] border border-[#E5DAF5] text-xs text-[#5E5468]">
+            <span>
+              Filtering by search: <strong className="text-[#343047]">"{initialSearch.trim()}"</strong> ({searchMatchCount} matches)
+            </span>
+            {onClearSearch && (
+              <button
+                type="button"
+                onClick={onClearSearch}
+                className="inline-flex items-center gap-1 text-[#6F4FA8] font-bold hover:underline"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Clear</span>
+              </button>
+            )}
           </div>
         )}
       </div>
 
-      {/* Resource Study Modal */}
-      {activeResourceModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-[#343047]/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="relative w-full max-w-2xl bg-[#FFFCFA] rounded-[26px] shadow-[0_24px_60px_-14px_rgba(74,56,102,0.3)] border border-[#EEE6E5] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="p-6 border-b border-[#EEE6E5] flex items-start justify-between gap-4 bg-gradient-to-r from-[#F0E9FA] via-[#FAF6F2] to-[#FCEAE5]">
-              <div className="flex items-start gap-4">
-                <ClayIconBadge
-                  variant={getCategoryTheme(activeResourceModal.category).variant}
-                  size="lg"
+      {/* Loading / Error States */}
+      {loading ? (
+        <div className="pastel-card p-12 flex flex-col items-center justify-center gap-3 text-center">
+          <Loader2 className="w-7 h-7 animate-spin text-[#8E6EC8]" />
+          <p className="font-display text-sm font-extrabold text-[#343047]">
+            Loading Explore Resources...
+          </p>
+          <p className="text-xs text-[#8B8295]">
+            Aligning verified videos, documentation, and courses with your direction
+          </p>
+        </div>
+      ) : error ? (
+        <div className="pastel-card p-8 flex flex-col items-center text-center gap-3">
+          <AlertCircle className="w-7 h-7 text-[#C26D5B]" />
+          <p className="font-display text-sm font-extrabold text-[#343047]">{error}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setLoading(true);
+              setError('');
+              fetchExploreResources({ userId: authUserId, forceRefresh: true })
+                .then((payload) => {
+                  if ((activeUserRef.current ?? null) === (authUserId ?? null)) {
+                    setData(payload);
+                  }
+                })
+                .catch((err) => {
+                  if ((activeUserRef.current ?? null) === (authUserId ?? null)) {
+                    setError(
+                      err instanceof Error ? err.message : 'Unable to reload resources.'
+                    );
+                  }
+                })
+                .finally(() => {
+                  if ((activeUserRef.current ?? null) === (authUserId ?? null)) {
+                    setLoading(false);
+                  }
+                });
+            }}
+            className="clay-button-primary px-4 py-2 text-xs font-bold"
+          >
+            Try Again
+          </button>
+        </div>
+      ) : !data ? null : activeTab === 'for_you' ? (
+        <div className="space-y-8">
+          {/* SECTION A: RECOMMENDED FOR YOU */}
+          <section aria-labelledby="section-recommended-for-you" className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+              <div>
+                <h2
+                  id="section-recommended-for-you"
+                  className="font-display text-lg sm:text-xl font-extrabold text-[#343047]"
                 >
-                  {getTypeIcon(activeResourceModal.type)}
-                </ClayIconBadge>
-                <div>
-                  <div className="flex items-center gap-2 text-xs text-[#8E6EC8] font-bold mb-1">
-                    <span>{activeResourceModal.category}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{activeResourceModal.type}</span>
-                    <span aria-hidden="true">·</span>
-                    <span>{activeResourceModal.duration}</span>
+                  Recommended for You
+                </h2>
+                <p className="text-xs text-[#6B6178]">
+                  3–5 focused resources aligned with your primary learning direction and supporting interests
+                </p>
+              </div>
+            </div>
+
+            {/* Primary Learning Direction Status Banner */}
+            {!data.hasSufficientPersonalization ||
+            summary?.primaryDirectionSource === 'unset' ||
+            !summary?.primaryDirection ? (
+              <div className="rounded-[22px] bg-[#FFF4E0]/85 border border-[#F2DCAB] p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="flex items-start gap-3">
+                  <ClayIconBadge variant="yellow" size="sm">
+                    <UserCheck className="w-4 h-4" />
+                  </ClayIconBadge>
+                  <div className="space-y-1">
+                    <p className="font-display text-sm font-extrabold text-[#343047]">
+                      {data.authenticated
+                        ? 'Set your Primary Learning Direction for focused recommendations'
+                        : 'Sign in & choose a Primary Learning Direction to personalize For You'}
+                    </p>
+                    <p className="text-xs text-[#6B5220] leading-relaxed">
+                      Pick one primary focus (plus optional supporting interests) in My Profile so Skillora recommends verified videos, documentation, and courses built around your direction. Browse Discover More tabs anytime.
+                    </p>
                   </div>
-                  <h3 className="font-display text-lg font-extrabold text-[#343047] leading-snug">
-                    {activeResourceModal.title}
-                  </h3>
-                  <p className="text-xs text-[#8B8295] mt-0.5">
-                    Published by {activeResourceModal.author} · {activeResourceModal.difficulty}
+                </div>
+                <div className="flex items-center gap-2 shrink-0 self-start sm:self-auto">
+                  {data.authenticated && (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('profile')}
+                      className="clay-button-primary px-4 py-2 text-xs font-bold"
+                    >
+                      Set Direction
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('all')}
+                    className="clay-button-soft px-4 py-2 text-xs font-bold text-[#6F4FA8]"
+                  >
+                    Browse All
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-[22px] bg-[#F4EEFC] border border-[#E2D6F5] px-4 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#5D5470]">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <Target className="w-4 h-4 text-[#8E6EC8] shrink-0" />
+                    <span className="font-bold text-[#343047]">
+                      Primary Direction:
+                    </span>
+                    <span className="font-extrabold text-[#5E3F99]">
+                      {summary.primaryDirection}
+                    </span>
+                    <span className="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-[#FFFCFA] border border-[#D8C9F2] text-[#6F4FA8]">
+                      {getPrimaryDirectionSourceLabel(summary.primaryDirectionSource)}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap text-[11px] text-[#6B6178]">
+                    {supportingTags.length > 0 && (
+                      <span>
+                        Supporting:{' '}
+                        <strong className="text-[#343047]">
+                          {supportingTags.slice(0, 4).join(', ')}
+                        </strong>
+                      </span>
+                    )}
+                    {summary.careerGoal &&
+                      summary.careerGoal.trim().toLowerCase() !==
+                        summary.primaryDirection.trim().toLowerCase() && (
+                        <span>· Goal: {summary.careerGoal}</span>
+                      )}
+                    <span>· Level: {summary.knowledgeLevel}</span>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('profile')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8] shrink-0 self-start sm:self-auto"
+                >
+                  Change Direction
+                </button>
+              </div>
+            )}
+
+            {/* Honest Resource Shortage Note */}
+            {summary?.shortageNote && (
+              <div className="rounded-[20px] bg-[#FFF4E0]/80 border border-[#F2DCAB] p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-[#6B5220]">
+                <div className="space-y-0.5">
+                  <p className="font-extrabold text-[#343047]">
+                    Limited verified resources for this exact direction
+                  </p>
+                  <p className="leading-relaxed">{summary.shortageNote}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8] shrink-0 self-start sm:self-auto"
+                >
+                  Discover More
+                </button>
+              </div>
+            )}
+
+            {/* Recommended Cards Grid */}
+            {filteredForYou.length > 0 ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {filteredForYou.map((item) =>
+                  renderResourceCard(item, { showRelationshipBadge: true })
+                )}
+              </div>
+            ) : discoverSearchFallback.length > 0 ? (
+              <div className="space-y-3">
+                <p className="text-xs font-bold text-[#6F4FA8]">
+                  No For You items matched "{initialSearch.trim()}". Showing matching verified resources from Discover More:
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {discoverSearchFallback.map((item) => renderResourceCard(item))}
+                </div>
+              </div>
+            ) : searchQuery ? (
+              <div className="pastel-card p-8 text-center space-y-2.5">
+                <p className="font-display text-sm font-extrabold text-[#343047]">
+                  No recommended resources matched "{initialSearch.trim()}"
+                </p>
+                {onClearSearch && (
+                  <button
+                    type="button"
+                    onClick={onClearSearch}
+                    className="clay-button-soft px-4 py-2 text-xs font-bold"
+                  >
+                    Clear Search
+                  </button>
+                )}
+              </div>
+            ) : (
+              data.hasSufficientPersonalization &&
+              !summary?.shortageNote && (
+                <div className="pastel-card p-7 text-center space-y-2">
+                  <p className="font-display text-sm font-extrabold text-[#343047]">
+                    No verified matches found yet for this direction
+                  </p>
+                  <p className="text-xs text-[#6B6178] max-w-md mx-auto">
+                    Try refining your Primary Learning Direction or explore the Discover More library below.
                   </p>
                 </div>
+              )
+            )}
+          </section>
+
+          {/* SECTION B: CONTINUE YOUR LEARNING */}
+          {data.authenticated && (
+            <section aria-labelledby="section-continue-learning" className="space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2">
+                <div className="space-y-1">
+                  <h2
+                    id="section-continue-learning"
+                    className="font-display text-lg sm:text-xl font-extrabold text-[#343047]"
+                  >
+                    Continue Your Learning
+                  </h2>
+                  <p className="text-xs text-[#6B6178]">
+                    Resources matched directly to your current course stage, active lesson, and recent knowledge gaps
+                  </p>
+                  {(summary?.currentCourseTitle || summary?.currentLessonTitle) && (
+                    <div className="flex items-center gap-2 flex-wrap pt-1 text-[11px] text-[#5E5468]">
+                      {summary.currentCourseTitle && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#EEF7EE] border border-[#C9E3C6] font-bold text-[#2F5B37]">
+                          Course: {summary.currentCourseTitle}
+                        </span>
+                      )}
+                      {summary.currentLessonTitle && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#F3ECFC] border border-[#DED0F5] font-bold text-[#5E3F99]">
+                          Current Lesson: {summary.currentLessonTitle}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onNavigate('roadmap')}
+                  className="text-xs font-bold text-[#6F4FA8] hover:underline inline-flex items-center gap-1 self-start sm:self-auto"
+                >
+                  <span>Open Learning Path</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
               </div>
 
-              <button
-                onClick={() => setActiveResourceModal(null)}
-                className="p-2 rounded-full bg-[#FFFCFA] border border-[#EEE6E5] text-[#8B8295] hover:text-[#343047] shadow-xs transition-colors"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="p-6 max-h-[55vh] overflow-y-auto space-y-4">
-              <div className="p-4 rounded-[20px] bg-[#F0E9FA]/75 border border-[#DFD2F2] text-xs text-[#343047] space-y-1">
-                <p className="font-bold flex items-center gap-1.5 text-[#6F4FA8]">
-                  <Sparkles className="w-4 h-4" />
-                  Skillora Curriculum Integration
-                </p>
-                <p className="leading-relaxed text-[#5D5470]">
-                  This resource reinforces key skills required for your Stage 3 & Stage 4 roadmap milestones.
-                </p>
-              </div>
-
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-[#8B8295] mb-1.5">
-                  Overview & Abstract
-                </h4>
-                <p className="text-xs sm:text-sm text-[#343047] leading-relaxed">
-                  {activeResourceModal.description}
-                </p>
-              </div>
-
-              {activeResourceModal.contentPreview && (
-                <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-[#8B8295] mb-1.5">
-                    Study Material Excerpt
-                  </h4>
-                  <div className="p-4 rounded-[18px] bg-[#FAF6F2] border border-[#EEE6E5] text-xs text-[#4C455B] font-mono leading-relaxed">
-                    {activeResourceModal.contentPreview}
+              {filteredContinueLearning.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                  {filteredContinueLearning.map((item) =>
+                    renderResourceCard(item, { showRelationshipBadge: true })
+                  )}
+                </div>
+              ) : !searchQuery ? (
+                <div className="pastel-card p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                  <div className="flex items-start gap-3">
+                    <ClayIconBadge variant="mint" size="sm">
+                      <Layers className="w-4 h-4" />
+                    </ClayIconBadge>
+                    <div className="space-y-1">
+                      <p className="font-display text-sm font-extrabold text-[#343047]">
+                        No active lesson or knowledge gap resources yet
+                      </p>
+                      <p className="text-xs text-[#6B6178] leading-relaxed">
+                        Generate your Learning Path or take a Skill Assessment to see resources matched to your next lesson.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('roadmap')}
+                      className="clay-button-primary px-3.5 py-2 text-xs font-bold"
+                    >
+                      Learning Path
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('assessment')}
+                      className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8]"
+                    >
+                      Skill Assessment
+                    </button>
                   </div>
                 </div>
-              )}
-            </div>
+              ) : null}
+            </section>
+          )}
 
-            <div className="p-4 px-6 border-t border-[#EEE6E5] bg-[#FAF6F2]/70 flex items-center justify-between">
-              <button
-                onClick={() => onToggleSave(activeResourceModal.id)}
-                className="flex items-center gap-1.5 text-xs font-bold text-[#6B6178] hover:text-[#343047]"
-              >
-                <Bookmark className="w-4 h-4" />
-                <span>{activeResourceModal.saved ? 'Bookmarked' : 'Save for Later'}</span>
-              </button>
-
-              <div className="flex items-center gap-2.5">
-                <button
-                  onClick={() => setActiveResourceModal(null)}
-                  className="clay-button-soft px-4 py-2 text-xs font-bold"
+          {/* SECTION C: DISCOVER MORE (Quick Navigation Footer) */}
+          <section aria-labelledby="section-discover-more" className="pastel-card p-5 sm:p-6">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="space-y-1">
+                <h2
+                  id="section-discover-more"
+                  className="font-display text-base sm:text-lg font-extrabold text-[#343047]"
                 >
-                  Close
+                  Discover More
+                </h2>
+                <p className="text-xs text-[#6B6178] max-w-2xl">
+                  Browse verified Videos, Documentation, and Courses across Computer Science, Engineering, GIS & Environmental Science, Business, and Data.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap shrink-0">
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('all')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#5E3F99] inline-flex items-center gap-1.5"
+                >
+                  <Compass className="w-3.5 h-3.5" />
+                  <span>All ({data.all.length})</span>
                 </button>
                 <button
-                  onClick={() => {
-                    setActiveResourceModal(null);
-                    onNavigate('roadmap');
-                  }}
-                  className="clay-button-primary px-5 py-2 text-xs font-bold"
+                  type="button"
+                  onClick={() => setActiveTab('videos')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8] inline-flex items-center gap-1.5"
                 >
-                  Mark as Underway
+                  <Youtube className="w-3.5 h-3.5" />
+                  <span>Videos ({data.videos.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('documentation')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#2F5B37] inline-flex items-center gap-1.5"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  <span>Documentation ({data.documentation.length})</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('courses')}
+                  className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#9E4F3E] inline-flex items-center gap-1.5"
+                >
+                  <GraduationCap className="w-3.5 h-3.5" />
+                  <span>Courses ({data.courses.length})</span>
                 </button>
               </div>
             </div>
+          </section>
+        </div>
+      ) : visibleItems.length === 0 ? (
+        <div className="pastel-card p-10 text-center space-y-2.5">
+          <p className="font-display text-base font-extrabold text-[#343047]">
+            No matching resources in this tab
+          </p>
+          <p className="text-xs text-[#8B8295] max-w-md mx-auto">
+            {searchQuery
+              ? 'Try clearing your search or switching to the All tab to browse every verified subject.'
+              : 'Explore the All tab to browse verified learning resources across all subjects.'}
+          </p>
+          <div className="pt-1 flex items-center justify-center gap-2">
+            {searchQuery && onClearSearch && (
+              <button
+                type="button"
+                onClick={onClearSearch}
+                className="clay-button-soft px-4 py-2 text-xs font-bold"
+              >
+                Clear Search
+              </button>
+            )}
+            {activeTab !== 'all' && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('all')}
+                className="clay-button-primary px-4 py-2 text-xs font-bold"
+              >
+                Browse All Resources
+              </button>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-[18px] bg-[#FAF6F2] border border-[#EEE6E5] px-4 py-2.5 flex flex-wrap items-center justify-between gap-2 text-xs text-[#5E5468]">
+            <span>
+              <strong className="text-[#343047]">Discover More:</strong> Balanced library across Engineering, GIS & Environmental Science, Business, Data, and Computer Science.
+            </span>
+            <button
+              type="button"
+              onClick={() => setActiveTab('for_you')}
+              className="font-bold text-[#6F4FA8] hover:underline"
+            >
+              Back to For You
+            </button>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+            {visibleItems.map((item) => renderResourceCard(item))}
           </div>
         </div>
       )}

@@ -23,6 +23,7 @@ interface SidebarProps {
   mobileOpen: boolean;
   onCloseMobile: () => void;
   onLogout: () => void;
+  isAuthenticated?: boolean;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -32,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   mobileOpen,
   onCloseMobile,
   onLogout,
+  isAuthenticated = false,
 }) => {
   const mainNavItems = [
     { id: 'dashboard' as AppView, label: 'Dashboard', icon: Home },
@@ -90,7 +92,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
               {user.overallProgress}%
             </span>
           </div>
-          <p className="text-xs font-bold text-white truncate mt-0.5">{user.careerGoal}</p>
+          <p className="text-xs font-bold text-white truncate mt-0.5">
+            {user.careerGoal || 'Set your career goal'}
+          </p>
           <div className="mt-2 w-full bg-white/25 h-1.5 rounded-full overflow-hidden">
             <div
               className="bg-[#FFFCFA] h-full rounded-full transition-all duration-500"
@@ -166,7 +170,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             className="w-full flex items-center gap-3 px-4 py-2 rounded-[14px] text-[13px] font-medium text-white/80 hover:bg-white/15 hover:text-white transition-colors whitespace-nowrap"
           >
             <LogOut className="w-[17px] h-[17px] shrink-0 text-white/75" />
-            <span>Landing Page</span>
+            <span>{isAuthenticated ? 'Sign Out' : 'Landing Page'}</span>
           </button>
         </div>
       </div>
