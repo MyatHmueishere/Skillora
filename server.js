@@ -6892,7 +6892,13 @@ function validateAndNormalizeRoadmap(raw, profile, analysis) {
     stages
   };
 }
+function stripMarkdownJsonFence(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
 function mapGeminiError(err) {
+  if (err instanceof RoadmapApiError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err ?? "Unknown AI error");
   const lower = rawMessage.toLowerCase();
   if (lower.includes("api_key_invalid") || lower.includes("api key not valid")) {
@@ -6914,6 +6920,27 @@ function mapGeminiError(err) {
       429,
       "GEMINI_QUOTA_EXCEEDED",
       "The AI service is temporarily busy due to quota limits. Please wait a moment and try again."
+    );
+  }
+  if (err instanceof Error && err.name === "AbortError" || lower.includes("abort") || lower.includes("timeout") || lower.includes("deadline_exceeded") || lower.includes("etimedout")) {
+    return new RoadmapApiError(
+      504,
+      "GEMINI_TIMEOUT",
+      "Roadmap generation took too long and timed out. Please try again."
+    );
+  }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("high demand") || lower.includes("overloaded") || lower.includes("500") || lower.includes("502") || lower.includes("504") || lower.includes("fetch failed") || lower.includes("econnreset") || lower.includes("enotfound") || lower.includes("network")) {
+    return new RoadmapApiError(
+      503,
+      "GEMINI_SERVICE_UNAVAILABLE",
+      "The AI service is temporarily unavailable due to high demand or a network issue. Please try again in a moment."
+    );
+  }
+  if (lower.includes("404") || lower.includes("not_found")) {
+    return new RoadmapApiError(
+      502,
+      "GEMINI_MODEL_UNAVAILABLE",
+      "The configured AI model is temporarily unavailable. Please try again shortly."
     );
   }
   return new RoadmapApiError(
@@ -6974,9 +7001,12 @@ async function generateWithGemini(profile, analysis) {
   let responseText = "";
   try {
     responseText = await attemptModel("gemini-4-hydrogen", 35e3, ThinkingLevel.LOW);
+    if (!responseText) {
+      throw new Error("EMPTY_PRIMARY_RESPONSE");
+    }
   } catch (primaryErr) {
     const msg = primaryErr instanceof Error ? primaryErr.message.toLowerCase() : "";
-    const isPermanent = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("403");
+    const isPermanent = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("invalid_argument") || msg.includes("403");
     if (isPermanent) {
       throw mapGeminiError(primaryErr);
     }
@@ -6999,7 +7029,7 @@ async function generateWithGemini(profile, analysis) {
   }
   let parsed;
   try {
-    parsed = JSON.parse(responseText);
+    parsed = JSON.parse(stripMarkdownJsonFence(responseText));
   } catch {
     throw new RoadmapApiError(
       502,
@@ -7239,7 +7269,7 @@ async function generateJsonWithTimeoutAndFallback(params) {
     if (primaryText) return primaryText;
   } catch (err) {
     const msg = err instanceof Error ? err.message.toLowerCase() : "";
-    const isAuthOrKeyFatal = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("403");
+    const isAuthOrKeyFatal = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("invalid_argument") || msg.includes("403");
     if (isAuthOrKeyFatal) {
       throw err;
     }
@@ -7333,7 +7363,13 @@ function createGeminiClient() {
     }
   });
 }
+function stripMarkdownJsonFence2(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
 function mapGeminiError2(err) {
+  if (err instanceof LessonApiError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err ?? "Unknown AI error");
   const lower = rawMessage.toLowerCase();
   if (lower.includes("api_key_invalid") || lower.includes("api key not valid")) {
@@ -7355,6 +7391,27 @@ function mapGeminiError2(err) {
       429,
       "GEMINI_QUOTA_EXCEEDED",
       "The AI service is temporarily busy due to quota limits. Please wait a moment and try again."
+    );
+  }
+  if (err instanceof Error && err.name === "AbortError" || lower.includes("abort") || lower.includes("timeout") || lower.includes("deadline_exceeded") || lower.includes("etimedout")) {
+    return new LessonApiError(
+      504,
+      "GEMINI_TIMEOUT",
+      "Lesson generation took too long and timed out. Please retry."
+    );
+  }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("high demand") || lower.includes("overloaded") || lower.includes("500") || lower.includes("502") || lower.includes("504") || lower.includes("fetch failed") || lower.includes("econnreset") || lower.includes("enotfound") || lower.includes("network")) {
+    return new LessonApiError(
+      503,
+      "GEMINI_SERVICE_UNAVAILABLE",
+      "The AI service is temporarily unavailable due to high demand or a network issue. Please try again in a moment."
+    );
+  }
+  if (lower.includes("404") || lower.includes("not_found")) {
+    return new LessonApiError(
+      502,
+      "GEMINI_MODEL_UNAVAILABLE",
+      "The configured AI model is temporarily unavailable. Please try again shortly."
     );
   }
   return new LessonApiError(
@@ -8047,7 +8104,7 @@ async function handleGenerateLessonContentRequest(params) {
     }
     let parsed;
     try {
-      parsed = JSON.parse(responseText);
+      parsed = JSON.parse(stripMarkdownJsonFence2(responseText));
     } catch {
       throw new LessonApiError(
         502,
@@ -8263,9 +8320,16 @@ async function handleClarifyLessonRequest(params) {
   } catch (err) {
     throw mapGeminiError2(err);
   }
+  if (!responseText) {
+    throw new LessonApiError(
+      502,
+      "AI_EMPTY_RESPONSE",
+      "The AI tutor returned an empty response. Please try again."
+    );
+  }
   let parsed = {};
   try {
-    parsed = JSON.parse(responseText || "{}");
+    parsed = JSON.parse(stripMarkdownJsonFence2(responseText));
   } catch {
     throw new LessonApiError(
       502,
@@ -8509,7 +8573,13 @@ function createGeminiClient2() {
     }
   });
 }
+function stripMarkdownJsonFence3(raw) {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("```")) return trimmed;
+  return trimmed.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+}
 function mapGeminiError3(err) {
+  if (err instanceof KnowledgeCheckApiError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err ?? "Unknown AI error");
   const lower = rawMessage.toLowerCase();
   if (lower.includes("api_key_invalid") || lower.includes("api key not valid")) {
@@ -8531,6 +8601,27 @@ function mapGeminiError3(err) {
       429,
       "GEMINI_QUOTA_EXCEEDED",
       "The AI service is temporarily busy due to quota limits. Please wait a moment and try again."
+    );
+  }
+  if (err instanceof Error && err.name === "AbortError" || lower.includes("abort") || lower.includes("timeout") || lower.includes("deadline_exceeded") || lower.includes("etimedout")) {
+    return new KnowledgeCheckApiError(
+      504,
+      "GEMINI_TIMEOUT",
+      "Knowledge Check generation took too long and timed out. Please retry."
+    );
+  }
+  if (lower.includes("503") || lower.includes("unavailable") || lower.includes("high demand") || lower.includes("overloaded") || lower.includes("500") || lower.includes("502") || lower.includes("504") || lower.includes("fetch failed") || lower.includes("econnreset") || lower.includes("enotfound") || lower.includes("network")) {
+    return new KnowledgeCheckApiError(
+      503,
+      "GEMINI_SERVICE_UNAVAILABLE",
+      "The AI service is temporarily unavailable due to high demand or a network issue. Please try again in a moment."
+    );
+  }
+  if (lower.includes("404") || lower.includes("not_found")) {
+    return new KnowledgeCheckApiError(
+      502,
+      "GEMINI_MODEL_UNAVAILABLE",
+      "The configured AI model is temporarily unavailable. Please try again shortly."
     );
   }
   return new KnowledgeCheckApiError(
@@ -8755,11 +8846,11 @@ ${lessonObjectives.length > 0 ? lessonObjectives.map((o, i) => `${i + 1}. ${o}`)
   try {
     responseText = await generateQuizWithModel("gemini-4-hydrogen", 2e4, true);
     if (!responseText) {
-      responseText = await generateQuizWithModel("gemini-3.1-flash-lite", 18e3, false);
+      throw new Error("EMPTY_PRIMARY_RESPONSE");
     }
   } catch (primaryErr) {
     const msg = primaryErr instanceof Error ? primaryErr.message.toLowerCase() : "";
-    const isAuthOrKeyFatal = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("403");
+    const isAuthOrKeyFatal = msg.includes("api_key_invalid") || msg.includes("api key not valid") || msg.includes("permission_denied") || msg.includes("invalid_argument") || msg.includes("403");
     if (isAuthOrKeyFatal) {
       throw mapGeminiError3(primaryErr);
     }
@@ -8769,9 +8860,16 @@ ${lessonObjectives.length > 0 ? lessonObjectives.map((o, i) => `${i + 1}. ${o}`)
       throw mapGeminiError3(fallbackErr);
     }
   }
+  if (!responseText) {
+    throw new KnowledgeCheckApiError(
+      502,
+      "AI_EMPTY_RESPONSE",
+      "The AI service returned an empty Knowledge Check response. Please retry."
+    );
+  }
   let parsed = {};
   try {
-    parsed = JSON.parse(responseText || "{}");
+    parsed = JSON.parse(stripMarkdownJsonFence3(responseText));
   } catch {
     throw new KnowledgeCheckApiError(
       502,
@@ -13909,7 +14007,7 @@ async function fetchCanonicalUserProgressSources(supabase, userId, authFullName,
     supabase.from("learning_sessions").select("*").eq("user_id", userId).order("started_at", { ascending: false }).limit(1e3),
     supabase.from("assessment_attempts").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(300),
     supabase.from("notification_preferences").select("timezone").eq("user_id", userId).maybeSingle(),
-    supabase.from("student_profiles").select("full_name, primary_direction, career_goal").eq("user_id", userId).maybeSingle()
+    supabase.from("student_profiles").select("*").eq("id", userId).maybeSingle()
   ]);
   if (roadmapsRes.error && !isMissingSchemaError(roadmapsRes.error)) {
     throw new AchievementApiError(
@@ -13946,7 +14044,7 @@ async function fetchCanonicalUserProgressSources(supabase, userId, authFullName,
   const assessmentAttempts = !assessmentsRes.error && Array.isArray(assessmentsRes.data) ? assessmentsRes.data.map((row) => mapAssessmentRow(row)) : [];
   const dbTimeZone = !notifPrefsRes.error && notifPrefsRes.data && typeof notifPrefsRes.data.timezone === "string" ? notifPrefsRes.data.timezone : void 0;
   const profileRow = !profileRes.error && profileRes.data ? profileRes.data : null;
-  const profileName = profileRow && typeof profileRow.full_name === "string" && profileRow.full_name.trim() ? profileRow.full_name.trim() : "";
+  const profileName = profileRow && typeof profileRow.full_name === "string" && profileRow.full_name.trim() ? profileRow.full_name.trim() : profileRow && typeof profileRow.name === "string" && profileRow.name.trim() ? profileRow.name.trim() : "";
   const studentName = profileName || authFullName || "Skillora Learner";
   const activeDirection = (profileRow && typeof profileRow.primary_direction === "string" ? profileRow.primary_direction.trim() : "") || (profileRow && typeof profileRow.career_goal === "string" ? profileRow.career_goal.trim() : "");
   const resolvedTimeZone = resolveSafeTimeZone(requestedTimeZone || dbTimeZone);
@@ -14385,6 +14483,9 @@ async function startServer() {
   const parsedPort = Number.parseInt(process.env.PORT ?? "", 10);
   const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3e3;
   const isProduction = process.env.NODE_ENV === "production" || path.basename(__filename) === "server.js";
+  if (isProduction && !process.env.NODE_ENV) {
+    process.env.NODE_ENV = "production";
+  }
   app.use(express.json());
   app.get("/api/config/supabase", (_req, res) => {
     res.setHeader("Cache-Control", "no-store");

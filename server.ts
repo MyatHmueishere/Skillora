@@ -65,6 +65,9 @@ async function startServer() {
   const isProduction =
     process.env.NODE_ENV === 'production' ||
     path.basename(__filename) === 'server.js';
+  if (isProduction && !process.env.NODE_ENV) {
+    process.env.NODE_ENV = 'production';
+  }
 
   app.use(express.json());
 

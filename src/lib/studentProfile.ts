@@ -1,8 +1,19 @@
 import { SupabaseClient, User } from '@supabase/supabase-js';
 import { UserProfile } from '../types';
 import { getSupabasePublicConfig } from './supabase';
+import defaultAvatarAssetUrl from '../assets/images/avatar_alex_chen_1794403312992.jpg';
 
-export const DEFAULT_AVATAR_URL = '/src/assets/images/avatar_alex_chen_1794403312992.jpg';
+const LEGACY_DEFAULT_AVATAR_PATH = '/src/assets/images/avatar_alex_chen_1794403312992.jpg';
+export const DEFAULT_AVATAR_URL: string = defaultAvatarAssetUrl;
+
+function normalizeAvatarUrl(raw: unknown, fallback: string): string {
+  if (typeof raw !== 'string') return fallback;
+  const trimmed = raw.trim();
+  if (!trimmed || trimmed === LEGACY_DEFAULT_AVATAR_PATH) {
+    return DEFAULT_AVATAR_URL;
+  }
+  return trimmed;
+}
 
 const ALLOWED_AVATAR_MIME_TYPES = new Set([
   'image/jpeg',
@@ -73,10 +84,7 @@ export function createEmptyUserProfile(authUser?: User | null): UserProfile {
       ? meta.full_name.trim()
       : '';
 
-  const metaAvatar =
-    typeof meta.avatar_url === 'string' && meta.avatar_url.trim()
-      ? meta.avatar_url.trim()
-      : DEFAULT_AVATAR_URL;
+  const metaAvatar = normalizeAvatarUrl(meta.avatar_url, DEFAULT_AVATAR_URL);
 
   return {
     name: metaName,
@@ -145,10 +153,7 @@ export function mapDbRowToUserProfile(
   const dbEmail =
     typeof row.email === 'string' && row.email.trim() ? row.email.trim() : base.email;
 
-  const dbAvatar =
-    typeof row.avatar_url === 'string' && row.avatar_url.trim()
-      ? row.avatar_url.trim()
-      : base.avatarUrl;
+  const dbAvatar = normalizeAvatarUrl(row.avatar_url, base.avatarUrl);
 
   const dbHoursRaw = row.preferred_hours_per_day ?? row.daily_study_hours;
   const dbHours =

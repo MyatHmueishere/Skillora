@@ -7,11 +7,14 @@ import {
   NotificationItem,
   AchievementBadge
 } from '../types';
+import defaultAvatarAssetUrl from '../assets/images/avatar_alex_chen_1794403312992.jpg';
+import coursePythonDevAssetUrl from '../assets/images/course_python_dev_1794403313824.jpg';
+import courseAiSystemsAssetUrl from '../assets/images/course_ai_systems_1794403313760.jpg';
 
 export const INITIAL_USER_PROFILE: UserProfile = {
   name: 'Alex Chen',
   email: 'alex.chen@student.edu',
-  avatarUrl: '/src/assets/images/avatar_alex_chen_1794403312992.jpg',
+  avatarUrl: defaultAvatarAssetUrl,
   educationLevel: 'Bachelor of Science (Senior Year)',
   university: 'University of Washington',
   fieldOfStudy: 'Computer Science & Software Engineering',
@@ -50,7 +53,7 @@ export const CONTINUE_LEARNING_COURSES: Course[] = [
     category: 'Backend Development',
     difficulty: 'Intermediate',
     duration: '14 hours total · 4 hours left',
-    imageUrl: '/src/assets/images/course_python_dev_1794403313824.jpg',
+    imageUrl: coursePythonDevAssetUrl,
     progressPercent: 72,
     totalLessons: 18,
     completedLessons: 13,
@@ -64,7 +67,7 @@ export const CONTINUE_LEARNING_COURSES: Course[] = [
     category: 'Computer Science',
     difficulty: 'Intermediate',
     duration: '20 hours total · 8 hours left',
-    imageUrl: '/src/assets/images/course_ai_systems_1794403313760.jpg',
+    imageUrl: courseAiSystemsAssetUrl,
     progressPercent: 60,
     totalLessons: 24,
     completedLessons: 14,
@@ -78,7 +81,7 @@ export const CONTINUE_LEARNING_COURSES: Course[] = [
     category: 'Databases',
     difficulty: 'Beginner',
     duration: '10 hours total · 6 hours left',
-    imageUrl: '/src/assets/images/course_python_dev_1794403313824.jpg',
+    imageUrl: coursePythonDevAssetUrl,
     progressPercent: 40,
     totalLessons: 12,
     completedLessons: 5,
@@ -95,7 +98,7 @@ export const RECOMMENDED_COURSES: Course[] = [
     category: 'Web Frameworks',
     difficulty: 'Intermediate',
     duration: '8.5 hours',
-    imageUrl: '/src/assets/images/course_python_dev_1794403313824.jpg',
+    imageUrl: coursePythonDevAssetUrl,
     totalLessons: 16,
     description: 'Build asynchronous, production-grade microservices with type validation, automated OpenAPI docs, and OAuth2 security.',
     instructor: 'Julian Morales',
@@ -107,7 +110,7 @@ export const RECOMMENDED_COURSES: Course[] = [
     category: 'DevOps & Tooling',
     difficulty: 'Beginner',
     duration: '6 hours',
-    imageUrl: '/src/assets/images/course_ai_systems_1794403313760.jpg',
+    imageUrl: courseAiSystemsAssetUrl,
     totalLessons: 10,
     description: 'Containerize multi-service applications, write clean Dockerfiles, and orchestrate environments with Docker Compose.',
     instructor: 'Sarah Jenkins',
@@ -119,7 +122,7 @@ export const RECOMMENDED_COURSES: Course[] = [
     category: 'Software Quality',
     difficulty: 'Intermediate',
     duration: '5 hours',
-    imageUrl: '/src/assets/images/course_python_dev_1794403313824.jpg',
+    imageUrl: coursePythonDevAssetUrl,
     totalLessons: 12,
     description: 'Write robust unit tests, parametric test fixtures, mock external dependencies, and integrate with CI/CD.',
     instructor: 'Liam O’Connor',
