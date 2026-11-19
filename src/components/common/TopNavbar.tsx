@@ -57,6 +57,10 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
         return 'AI Learning Assistant';
       case 'progress':
         return 'My Progress';
+      case 'achievements':
+        return 'Achievements & Certificates';
+      case 'verify':
+        return 'Certificate Verification';
       case 'profile':
         return 'My Profile';
       case 'settings':
@@ -108,7 +112,7 @@ export const TopNavbar: React.FC<TopNavbarProps> = ({
       <div className="flex items-center gap-2.5 shrink-0">
         {/* Level & XP pill */}
         <button
-          onClick={() => (onOpenAchievements ? onOpenAchievements() : onNavigate('progress'))}
+          onClick={() => (onOpenAchievements ? onOpenAchievements() : onNavigate('achievements'))}
           className="hidden lg:flex items-center gap-1.5 px-3 py-2 rounded-full bg-[#F0E9FA] border border-[#E2D6F5] text-[#5D438E] text-xs font-bold shadow-[0_4px_12px_-4px_rgba(124,102,148,0.16)] hover:brightness-98 transition-all"
           title={`Level ${learnerLevel} · ${totalXp} XP — View Achievements`}
         >

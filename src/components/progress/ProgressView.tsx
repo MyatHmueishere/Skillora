@@ -32,6 +32,7 @@ import {
   LessonKnowledgeCheckAttemptRecord,
   LearningSessionRecord,
   AchievementSummaryPayload,
+  IssuedCertificateRecord,
 } from '../../types';
 import {
   WEEKLY_ACTIVITY_DATA,
@@ -66,6 +67,7 @@ export type ProgressTabId = 'overview' | 'assessments' | 'knowledge_checks' | 'b
 
 interface ProgressViewProps {
   user: UserProfile;
+  authUserId?: string | null;
   isAuthenticated?: boolean;
   attempts?: AssessmentAttemptRecord[];
   attemptsLoading?: boolean;
@@ -85,6 +87,8 @@ interface ProgressViewProps {
   achievementsLoading?: boolean;
   achievementsError?: string;
   onRefreshAchievements?: () => void;
+  onOpenVerification?: (certificateNumber?: string) => void;
+  onCertificateUpdated?: (updatedCertificate: IssuedCertificateRecord) => void;
   onRefreshAttempts?: () => void;
   onRefreshKnowledgeChecks?: () => void;
   onRefreshSessions?: () => void;
@@ -94,6 +98,7 @@ interface ProgressViewProps {
 
 export const ProgressView: React.FC<ProgressViewProps> = ({
   user,
+  authUserId = null,
   isAuthenticated = false,
   attempts = [],
   attemptsLoading = false,
@@ -113,6 +118,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
   achievementsLoading = false,
   achievementsError = '',
   onRefreshAchievements,
+  onOpenVerification,
+  onCertificateUpdated,
   onRefreshAttempts,
   onRefreshKnowledgeChecks,
   onRefreshSessions,
@@ -151,6 +158,9 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
     achievementsSummary ??
     buildComputedAchievementsFallback({
       authenticated: isAuthenticated,
+      userId: authUserId ?? undefined,
+      studentName: user.name,
+      activeDirection: user.primaryDirection || user.careerGoal,
       roadmaps: [activeRoadmap, ...archivedRoadmaps].filter(
         (r): r is LearningRoadmapRecord => Boolean(r)
       ),
@@ -1970,6 +1980,8 @@ export const ProgressView: React.FC<ProgressViewProps> = ({
           error={achievementsError}
           onRefresh={onRefreshAchievements}
           onNavigate={onNavigate}
+          onOpenVerification={onOpenVerification}
+          onCertificateUpdated={onCertificateUpdated}
         />
       )}
     </div>

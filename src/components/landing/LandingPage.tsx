@@ -84,6 +84,12 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             >
               Student Stories
             </button>
+            <button
+              onClick={() => navigatePreview('verify')}
+              className="hover:text-[#343047] transition-colors whitespace-nowrap cursor-pointer"
+            >
+              Verify Certificate
+            </button>
           </nav>
 
           <div className="flex items-center gap-3 shrink-0">
@@ -513,6 +519,7 @@ export const LandingPage: React.FC<LandingPageProps> = ({
             <button onClick={() => scrollToSection('how-it-works')} className="hover:text-[#343047]">How It Works</button>
             <button onClick={() => scrollToSection('curriculum')} className="hover:text-[#343047]">Roadmaps</button>
             <button onClick={() => scrollToSection('testimonials')} className="hover:text-[#343047]">Student Stories</button>
+            <button onClick={() => navigatePreview('verify')} className="hover:text-[#343047]">Verify Certificate</button>
             <button onClick={onLogin} className="hover:text-[#343047]">Sign In</button>
             <button onClick={onGetStarted} className="text-[#8E6EC8] hover:text-[#343047]">Get Started</button>
           </div>

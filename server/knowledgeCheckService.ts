@@ -312,7 +312,17 @@ function createGeminiClient(): GoogleGenAI {
   });
 }
 
+function stripMarkdownJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
 function mapGeminiError(err: unknown): KnowledgeCheckApiError {
+  if (err instanceof KnowledgeCheckApiError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err ?? 'Unknown AI error');
   const lower = rawMessage.toLowerCase();
   if (lower.includes('api_key_invalid') || lower.includes('api key not valid')) {
@@ -334,6 +344,45 @@ function mapGeminiError(err: unknown): KnowledgeCheckApiError {
       429,
       'GEMINI_QUOTA_EXCEEDED',
       'The AI service is temporarily busy due to quota limits. Please wait a moment and try again.'
+    );
+  }
+  if (
+    (err instanceof Error && err.name === 'AbortError') ||
+    lower.includes('abort') ||
+    lower.includes('timeout') ||
+    lower.includes('deadline_exceeded') ||
+    lower.includes('etimedout')
+  ) {
+    return new KnowledgeCheckApiError(
+      504,
+      'GEMINI_TIMEOUT',
+      'Knowledge Check generation took too long and timed out. Please retry.'
+    );
+  }
+  if (
+    lower.includes('503') ||
+    lower.includes('unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('overloaded') ||
+    lower.includes('500') ||
+    lower.includes('502') ||
+    lower.includes('504') ||
+    lower.includes('fetch failed') ||
+    lower.includes('econnreset') ||
+    lower.includes('enotfound') ||
+    lower.includes('network')
+  ) {
+    return new KnowledgeCheckApiError(
+      503,
+      'GEMINI_SERVICE_UNAVAILABLE',
+      'The AI service is temporarily unavailable due to high demand or a network issue. Please try again in a moment.'
+    );
+  }
+  if (lower.includes('404') || lower.includes('not_found')) {
+    return new KnowledgeCheckApiError(
+      502,
+      'GEMINI_MODEL_UNAVAILABLE',
+      'The configured AI model is temporarily unavailable. Please try again shortly.'
     );
   }
   return new KnowledgeCheckApiError(
@@ -665,7 +714,7 @@ export async function handleStartKnowledgeCheck(params: {
   try {
     responseText = await generateQuizWithModel('gemini-4-hydrogen', 20_000, true);
     if (!responseText) {
-      responseText = await generateQuizWithModel('gemini-3.1-flash-lite', 18_000, false);
+      throw new Error('EMPTY_PRIMARY_RESPONSE');
     }
   } catch (primaryErr) {
     const msg = primaryErr instanceof Error ? primaryErr.message.toLowerCase() : '';
@@ -673,6 +722,7 @@ export async function handleStartKnowledgeCheck(params: {
       msg.includes('api_key_invalid') ||
       msg.includes('api key not valid') ||
       msg.includes('permission_denied') ||
+      msg.includes('invalid_argument') ||
       msg.includes('403');
     if (isAuthOrKeyFatal) {
       throw mapGeminiError(primaryErr);
@@ -684,9 +734,17 @@ export async function handleStartKnowledgeCheck(params: {
     }
   }
 
+  if (!responseText) {
+    throw new KnowledgeCheckApiError(
+      502,
+      'AI_EMPTY_RESPONSE',
+      'The AI service returned an empty Knowledge Check response. Please retry.'
+    );
+  }
+
   let parsed: { questions?: unknown[] } = {};
   try {
-    parsed = JSON.parse(responseText || '{}') as { questions?: unknown[] };
+    parsed = JSON.parse(stripMarkdownJsonFence(responseText)) as { questions?: unknown[] };
   } catch {
     throw new KnowledgeCheckApiError(
       502,

@@ -19,6 +19,7 @@ import {
   NotificationPreferences,
   PushPublicConfig,
   AchievementSummaryPayload,
+  IssuedCertificateRecord,
 } from './types';
 import {
   INITIAL_USER_PROFILE,
@@ -116,7 +117,10 @@ import {
   syncAchievementsSummary,
   AchievementsClientError,
 } from './lib/achievements';
+import { AchievementsTabId } from './components/achievements/AchievementsSection';
 import { ProgressView, ProgressTabId } from './components/progress/ProgressView';
+import { AchievementsView } from './components/achievements/AchievementsView';
+import { CertificateVerificationView } from './components/achievements/CertificateVerificationView';
 import { ProfileView } from './components/profile/ProfileView';
 import { SettingsView, SettingsTabId } from './components/profile/SettingsView';
 import { HelpView } from './components/help/HelpView';
@@ -130,6 +134,8 @@ const VALID_APP_VIEWS: ReadonlySet<AppView> = new Set<AppView>([
   'resources',
   'assistant',
   'progress',
+  'achievements',
+  'verify',
   'profile',
   'settings',
   'help',
@@ -149,9 +155,36 @@ function isSupabaseAuthHash(hash: string): boolean {
   );
 }
 
+function parseVerifyTargetFromLocation(
+  hash: string,
+  search: string
+): { isVerify: boolean; certificateNumber: string } {
+  const searchParams = new URLSearchParams(search);
+  const queryCert = (searchParams.get('verify') ?? '').trim().toUpperCase();
+  if (queryCert) {
+    return { isVerify: true, certificateNumber: queryCert };
+  }
+  if (!hash || isSupabaseAuthHash(hash)) {
+    return { isVerify: false, certificateNumber: '' };
+  }
+  const cleaned = hash.replace(/^#\/?/, '').trim();
+  const lower = cleaned.toLowerCase();
+  if (lower === 'verify') {
+    return { isVerify: true, certificateNumber: '' };
+  }
+  if (lower.startsWith('verify/')) {
+    const rawCert = decodeURIComponent(cleaned.slice('verify/'.length)).trim().toUpperCase();
+    return { isVerify: true, certificateNumber: rawCert };
+  }
+  return { isVerify: false, certificateNumber: '' };
+}
+
 function parseAppViewFromHash(hash: string): AppView | null {
   if (!hash || isSupabaseAuthHash(hash)) return null;
   const cleaned = hash.replace(/^#\/?/, '').trim().toLowerCase();
+  if (cleaned === 'verify' || cleaned.startsWith('verify/')) {
+    return 'verify';
+  }
   if (VALID_APP_VIEWS.has(cleaned as AppView)) {
     return cleaned as AppView;
   }
@@ -254,6 +287,12 @@ export default function App() {
   const [notifRevision, setNotifRevision] = useState(0);
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTabId>('personal');
   const [progressInitialTab, setProgressInitialTab] = useState<ProgressTabId>('overview');
+  const [achievementsInitialTab, setAchievementsInitialTab] =
+    useState<AchievementsTabId>('overview');
+  const [verifyCertificateNumber, setVerifyCertificateNumber] = useState<string>(() =>
+    parseVerifyTargetFromLocation(window.location.hash, window.location.search).certificateNumber
+  );
+  const previousNonVerifyViewRef = useRef<AppView>('landing');
   const [achievementsSummary, setAchievementsSummary] =
     useState<AchievementSummaryPayload | null>(null);
   const [achievementsLoading, setAchievementsLoading] = useState(false);
@@ -289,6 +328,9 @@ export default function App() {
 
   useEffect(() => {
     currentViewRef.current = currentView;
+    if (currentView !== 'verify') {
+      previousNonVerifyViewRef.current = currentView;
+    }
   }, [currentView]);
 
   useEffect(() => {
@@ -315,30 +357,53 @@ export default function App() {
       return;
     }
 
-    writePersistedRouteState({
-      view: currentView,
-      userId: session?.user?.id ?? null,
-      selectedCourseId,
-      activeStudyLesson,
-      updatedAt: Date.now(),
-    });
+    if (currentView !== 'verify') {
+      writePersistedRouteState({
+        view: currentView,
+        userId: session?.user?.id ?? null,
+        selectedCourseId,
+        activeStudyLesson,
+        updatedAt: Date.now(),
+      });
+    }
 
     if (!isSupabaseAuthHash(window.location.hash)) {
-      const currentHashView = parseAppViewFromHash(window.location.hash);
-      if (currentHashView !== currentView) {
+      const targetHash =
+        currentView === 'verify'
+          ? verifyCertificateNumber
+            ? `#/verify/${encodeURIComponent(verifyCertificateNumber)}`
+            : '#/verify'
+          : `#/${currentView}`;
+      if (window.location.hash !== targetHash) {
         window.history.replaceState(
           null,
           document.title,
-          `${window.location.pathname}${window.location.search}#/${currentView}`
+          `${window.location.pathname}${window.location.search}${targetHash}`
         );
       }
     }
-  }, [authLoading, currentView, session?.user?.id, selectedCourseId, activeStudyLesson]);
+  }, [
+    authLoading,
+    currentView,
+    verifyCertificateNumber,
+    session?.user?.id,
+    selectedCourseId,
+    activeStudyLesson,
+  ]);
 
   // Sync browser hash navigation (back/forward buttons)
   useEffect(() => {
     const handleHashChange = () => {
       if (authLoading) return;
+      const verifyTarget = parseVerifyTargetFromLocation(
+        window.location.hash,
+        window.location.search
+      );
+      if (verifyTarget.isVerify) {
+        setVerifyCertificateNumber(verifyTarget.certificateNumber);
+        setCurrentView('verify');
+        return;
+      }
       const hashView = parseAppViewFromHash(window.location.hash);
       if (!hashView) return;
       if (hashView === 'landing' && session?.user) {
@@ -566,6 +631,7 @@ export default function App() {
       const isVerificationRedirect =
         hasAuthCallbackParams && !isRecoveryRedirect && !callbackError;
 
+      const initialVerify = parseVerifyTargetFromLocation(initialHash, window.location.search);
       const initialHashView = parseAppViewFromHash(initialHash);
       const savedRoute = readPersistedRouteState();
 
@@ -620,6 +686,9 @@ export default function App() {
             } else {
               setAuthModalOpen(false);
             }
+          } else if (initialVerify.isVerify) {
+            setVerifyCertificateNumber(initialVerify.certificateNumber);
+            setCurrentView('verify');
           } else {
             const matchingSavedRoute =
               savedRoute && savedRoute.userId === existingSession.user.id ? savedRoute : null;
@@ -647,6 +716,9 @@ export default function App() {
               setAuthModalOpen(true);
             }
           }
+        } else if (initialVerify.isVerify) {
+          setVerifyCertificateNumber(initialVerify.certificateNumber);
+          setCurrentView('verify');
         } else {
           const guestSavedRoute =
             savedRoute && savedRoute.userId === null ? savedRoute : null;
@@ -938,10 +1010,36 @@ export default function App() {
     }
   };
 
+  const handleCertificateUpdated = (updatedCertificate: IssuedCertificateRecord) => {
+    setAchievementsSummary((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        certificates: prev.certificates.map((cert) =>
+          cert.id === updatedCertificate.id ||
+          cert.certificateNumber === updatedCertificate.certificateNumber
+            ? updatedCertificate
+            : cert
+        ),
+      };
+    });
+  };
+
+  const openVerificationView = (certificateNumber?: string) => {
+    if (currentViewRef.current !== 'verify') {
+      previousNonVerifyViewRef.current = currentViewRef.current;
+    }
+    setVerifyCertificateNumber((certificateNumber ?? '').trim().toUpperCase());
+    setCurrentView('verify');
+  };
+
   const effectiveAchievementsSummary: AchievementSummaryPayload =
     achievementsSummary ??
     buildComputedAchievementsFallback({
       authenticated: Boolean(session),
+      userId: session?.user?.id,
+      studentName: user.name,
+      activeDirection: user.primaryDirection || user.careerGoal,
       roadmaps: [activeRoadmap, ...archivedRoadmaps].filter(
         (r): r is LearningRoadmapRecord => Boolean(r)
       ),
@@ -1218,6 +1316,7 @@ export default function App() {
           completedCoursesCount: currentStats.completedStages,
         });
       }
+      void refreshServerAchievements();
     } finally {
       profileUpdateInFlightRef.current = false;
     }
@@ -1696,7 +1795,25 @@ export default function App() {
 
   return (
     <>
-      {currentView === 'landing' ? (
+      {currentView === 'verify' ? (
+        <CertificateVerificationView
+          initialCertificateNumber={verifyCertificateNumber}
+          isAuthenticated={Boolean(session)}
+          onBack={() => {
+            if (window.location.search.includes('verify=')) {
+              window.history.replaceState(null, document.title, window.location.pathname);
+            }
+            const fallbackTarget = session
+              ? previousNonVerifyViewRef.current !== 'landing' &&
+                previousNonVerifyViewRef.current !== 'verify'
+                ? previousNonVerifyViewRef.current
+                : 'achievements'
+              : 'landing';
+            setVerifyCertificateNumber('');
+            setCurrentView(fallbackTarget);
+          }}
+        />
+      ) : currentView === 'landing' ? (
         <LandingPage
           onGetStarted={openSignUp}
           onLogin={openLogin}
@@ -1704,6 +1821,10 @@ export default function App() {
           onExploreView={(view) => {
             setSelectedCourseId(null);
             setActiveStudyLesson(null);
+            if (view === 'verify') {
+              openVerificationView('');
+              return;
+            }
             setCurrentView(view);
           }}
         />
@@ -1751,8 +1872,8 @@ export default function App() {
           onOpenAchievements={() => {
             setSelectedCourseId(null);
             setActiveStudyLesson(null);
-            setProgressInitialTab('badges');
-            setCurrentView('progress');
+            setAchievementsInitialTab('overview');
+            setCurrentView('achievements');
           }}
           onOpenNotificationSettings={() => {
             setSelectedCourseId(null);
@@ -1792,6 +1913,13 @@ export default function App() {
               learningSessions={learningSessions}
               sessionsLoading={sessionsLoading}
               timeZone={notificationPrefs.timezone}
+              achievementsSummary={effectiveAchievementsSummary}
+              onOpenAchievements={(tab) => {
+                setSelectedCourseId(null);
+                setActiveStudyLesson(null);
+                setAchievementsInitialTab(tab ?? 'overview');
+                setCurrentView('achievements');
+              }}
               onGenerateRoadmap={handleGenerateRoadmap}
               onSwitchToPreservedRoadmap={handleSwitchToPreservedRoadmap}
               onNavigate={(view) => {
@@ -2037,6 +2165,7 @@ export default function App() {
           {currentView === 'progress' && (
             <ProgressView
               user={user}
+              authUserId={session?.user?.id ?? null}
               isAuthenticated={Boolean(session)}
               attempts={assessmentAttempts}
               attemptsLoading={attemptsLoading}
@@ -2058,6 +2187,8 @@ export default function App() {
               onRefreshAchievements={() => {
                 void refreshServerAchievements();
               }}
+              onOpenVerification={openVerificationView}
+              onCertificateUpdated={handleCertificateUpdated}
               onRefreshAttempts={handleRefreshAssessmentAttempts}
               onRefreshKnowledgeChecks={handleRefreshKnowledgeChecks}
               onRefreshSessions={handleRefreshSessions}
@@ -2067,6 +2198,22 @@ export default function App() {
                 setCurrentView('roadmap');
               }}
               onNavigate={(view) => setCurrentView(view)}
+            />
+          )}
+
+          {currentView === 'achievements' && (
+            <AchievementsView
+              summary={effectiveAchievementsSummary}
+              isAuthenticated={Boolean(session)}
+              isLoading={achievementsLoading}
+              error={achievementsError}
+              initialTab={achievementsInitialTab}
+              onRefresh={() => {
+                void refreshServerAchievements();
+              }}
+              onNavigate={(view) => setCurrentView(view)}
+              onOpenVerification={openVerificationView}
+              onCertificateUpdated={handleCertificateUpdated}
             />
           )}
 
@@ -2084,8 +2231,8 @@ export default function App() {
               onViewAchievements={() => {
                 setSelectedCourseId(null);
                 setActiveStudyLesson(null);
-                setProgressInitialTab('badges');
-                setCurrentView('progress');
+                setAchievementsInitialTab('overview');
+                setCurrentView('achievements');
               }}
             />
           )}

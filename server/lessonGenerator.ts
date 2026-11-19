@@ -197,6 +197,7 @@ async function generateJsonWithTimeoutAndFallback(params: {
       msg.includes('api_key_invalid') ||
       msg.includes('api key not valid') ||
       msg.includes('permission_denied') ||
+      msg.includes('invalid_argument') ||
       msg.includes('403');
     if (isAuthOrKeyFatal) {
       throw err;
@@ -313,7 +314,17 @@ function createGeminiClient(): GoogleGenAI {
   });
 }
 
+function stripMarkdownJsonFence(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('```')) return trimmed;
+  return trimmed
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+}
+
 function mapGeminiError(err: unknown): LessonApiError {
+  if (err instanceof LessonApiError) return err;
   const rawMessage = err instanceof Error ? err.message : String(err ?? 'Unknown AI error');
   const lower = rawMessage.toLowerCase();
 
@@ -336,6 +347,45 @@ function mapGeminiError(err: unknown): LessonApiError {
       429,
       'GEMINI_QUOTA_EXCEEDED',
       'The AI service is temporarily busy due to quota limits. Please wait a moment and try again.'
+    );
+  }
+  if (
+    (err instanceof Error && err.name === 'AbortError') ||
+    lower.includes('abort') ||
+    lower.includes('timeout') ||
+    lower.includes('deadline_exceeded') ||
+    lower.includes('etimedout')
+  ) {
+    return new LessonApiError(
+      504,
+      'GEMINI_TIMEOUT',
+      'Lesson generation took too long and timed out. Please retry.'
+    );
+  }
+  if (
+    lower.includes('503') ||
+    lower.includes('unavailable') ||
+    lower.includes('high demand') ||
+    lower.includes('overloaded') ||
+    lower.includes('500') ||
+    lower.includes('502') ||
+    lower.includes('504') ||
+    lower.includes('fetch failed') ||
+    lower.includes('econnreset') ||
+    lower.includes('enotfound') ||
+    lower.includes('network')
+  ) {
+    return new LessonApiError(
+      503,
+      'GEMINI_SERVICE_UNAVAILABLE',
+      'The AI service is temporarily unavailable due to high demand or a network issue. Please try again in a moment.'
+    );
+  }
+  if (lower.includes('404') || lower.includes('not_found')) {
+    return new LessonApiError(
+      502,
+      'GEMINI_MODEL_UNAVAILABLE',
+      'The configured AI model is temporarily unavailable. Please try again shortly.'
     );
   }
   return new LessonApiError(
@@ -1300,7 +1350,7 @@ export async function handleGenerateLessonContentRequest(params: {
 
     let parsed: unknown;
     try {
-      parsed = JSON.parse(responseText);
+      parsed = JSON.parse(stripMarkdownJsonFence(responseText));
     } catch {
       throw new LessonApiError(
         502,
@@ -1605,9 +1655,17 @@ export async function handleClarifyLessonRequest(params: {
     throw mapGeminiError(err);
   }
 
+  if (!responseText) {
+    throw new LessonApiError(
+      502,
+      'AI_EMPTY_RESPONSE',
+      'The AI tutor returned an empty response. Please try again.'
+    );
+  }
+
   let parsed: Record<string, unknown> = {};
   try {
-    parsed = JSON.parse(responseText || '{}') as Record<string, unknown>;
+    parsed = JSON.parse(stripMarkdownJsonFence(responseText)) as Record<string, unknown>;
   } catch {
     throw new LessonApiError(
       502,

@@ -18,6 +18,9 @@ import {
   GraduationCap,
   ClipboardCheck,
   Target,
+  Trophy,
+  Award,
+  Lock,
 } from 'lucide-react';
 import {
   UserProfile,
@@ -28,7 +31,9 @@ import {
   LessonKnowledgeCheckAttemptRecord,
   LearningSessionRecord,
   ExploreResourcesPayload,
+  AchievementSummaryPayload,
 } from '../../types';
+import type { AchievementsTabId } from '../achievements/AchievementsSection';
 import {
   SKILL_OVERVIEW_DATA,
   CONTINUE_LEARNING_COURSES,
@@ -91,6 +96,8 @@ interface DashboardViewProps {
   learningSessions?: LearningSessionRecord[];
   sessionsLoading?: boolean;
   timeZone?: string;
+  achievementsSummary?: AchievementSummaryPayload | null;
+  onOpenAchievements?: (tab?: AchievementsTabId) => void;
   onGenerateRoadmap?: (replaceActive?: boolean) => Promise<boolean> | void;
   onSwitchToPreservedRoadmap?: (roadmapId: string) => Promise<void> | void;
   onNavigate: (view: AppView) => void;
@@ -116,6 +123,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   learningSessions = [],
   sessionsLoading = false,
   timeZone,
+  achievementsSummary = null,
+  onOpenAchievements,
   onGenerateRoadmap,
   onSwitchToPreservedRoadmap,
   onNavigate,
@@ -1084,6 +1093,332 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* STUDENT LEVEL, XP, BADGES & CERTIFICATE CREDENTIALS */}
+      {achievementsSummary && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
+          {/* Level, Overall XP vs Active Direction XP, Milestones & Next Badge (7 cols) */}
+          <div className="lg:col-span-7 pastel-card p-6 flex flex-col justify-between gap-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <ClayIconBadge variant="lavender" size="md">
+                  <Trophy className="w-5 h-5" />
+                </ClayIconBadge>
+                <div>
+                  <div className="flex items-center gap-2 text-xs text-[#6F4FA8] font-bold">
+                    <span className="tabular-nums">Level {achievementsSummary.levelInfo.level}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{achievementsSummary.levelInfo.title}</span>
+                  </div>
+                  <h2 className="font-display text-lg font-extrabold text-[#343047]">
+                    XP &amp; Learning Milestones
+                  </h2>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenAchievements ? onOpenAchievements('overview') : onNavigate('achievements')
+                }
+                className="clay-button-soft px-3.5 py-2 text-xs font-bold text-[#6F4FA8] whitespace-nowrap shrink-0"
+              >
+                Open Achievements
+              </button>
+            </div>
+
+            {/* Option A XP Readout + Next Level Progress */}
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3.5 rounded-[18px] bg-[#F0E9FA]/65 border border-[#E2D6F5]">
+                  <p className="text-[11px] font-bold text-[#6F4FA8]">Overall XP</p>
+                  <p className="font-display text-2xl font-extrabold text-[#343047] tabular-nums mt-0.5">
+                    {achievementsSummary.totalXp.toLocaleString()} XP
+                  </p>
+                  <p className="text-[11px] text-[#6B6178] mt-0.5 tabular-nums">
+                    Cumulative across all learning directions
+                  </p>
+                </div>
+
+                <div className="p-3.5 rounded-[18px] bg-[#FAF6F2] border border-[#EEE6E5]">
+                  <p className="text-[11px] font-bold text-[#5D5470] truncate">
+                    Direction XP ·{' '}
+                    {achievementsSummary.activeDirection ||
+                      journey.primaryDirection ||
+                      user.primaryDirection ||
+                      user.careerGoal ||
+                      'Active Path'}
+                  </p>
+                  <p className="font-display text-2xl font-extrabold text-[#343047] tabular-nums mt-0.5">
+                    {achievementsSummary.activeDirectionXp.toLocaleString()} XP
+                  </p>
+                  <p className="text-[11px] text-[#8B8295] mt-0.5 tabular-nums">
+                    {achievementsSummary.directionXpBreakdown.length}{' '}
+                    {achievementsSummary.directionXpBreakdown.length === 1
+                      ? 'direction'
+                      : 'directions'}{' '}
+                    tracked
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between text-xs text-[#6B6178] tabular-nums">
+                  <span className="font-semibold">
+                    Progress to Level {achievementsSummary.levelInfo.level + 1}
+                  </span>
+                  <span className="font-mono font-bold text-[#6F4FA8]">
+                    {achievementsSummary.levelInfo.xpIntoCurrentLevel} /{' '}
+                    {achievementsSummary.levelInfo.xpNeededForNextLevel} XP (
+                    {achievementsSummary.levelInfo.progressPercent}%)
+                  </span>
+                </div>
+                <div className="w-full h-2.5 rounded-full bg-[#F1EAE8] overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-gradient-to-r from-[#A78BCE] to-[#7DBE8B] transition-all duration-300"
+                    style={{ width: `${achievementsSummary.levelInfo.progressPercent}%` }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Learning Milestones & Next Achievement Progress */}
+            <div className="pt-4 border-t border-[#EEE6E5] grid grid-cols-1 sm:grid-cols-12 gap-4 items-center">
+              <div className="sm:col-span-6 grid grid-cols-2 gap-2.5">
+                <div className="p-2.5 rounded-[14px] bg-[#FAF6F2] border border-[#EEE6E5]">
+                  <p className="text-[11px] text-[#8B8295] font-semibold">Lessons Done</p>
+                  <p className="font-display text-base font-extrabold text-[#343047] tabular-nums">
+                    {achievementsSummary.stats.completedLessonsCount}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-[14px] bg-[#FAF6F2] border border-[#EEE6E5]">
+                  <p className="text-[11px] text-[#8B8295] font-semibold">Passed Quizzes</p>
+                  <p className="font-display text-base font-extrabold text-[#343047] tabular-nums">
+                    {achievementsSummary.stats.passedKnowledgeChecksCount}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-[14px] bg-[#FAF6F2] border border-[#EEE6E5]">
+                  <p className="text-[11px] text-[#8B8295] font-semibold">Courses Done</p>
+                  <p className="font-display text-base font-extrabold text-[#343047] tabular-nums">
+                    {achievementsSummary.stats.completedStagesCount}
+                  </p>
+                </div>
+                <div className="p-2.5 rounded-[14px] bg-[#FAF6F2] border border-[#EEE6E5]">
+                  <p className="text-[11px] text-[#8B8295] font-semibold">Paths Finished</p>
+                  <p className="font-display text-base font-extrabold text-[#343047] tabular-nums">
+                    {achievementsSummary.stats.completedPathsCount}
+                  </p>
+                </div>
+              </div>
+
+              <div className="sm:col-span-6 p-3.5 rounded-[18px] bg-[#FFF1D6]/50 border border-[#F3DFB4] space-y-2">
+                {(() => {
+                  const nextLocked =
+                    achievementsSummary.badges
+                      .filter((b) => !b.unlocked && b.progressTarget > 0)
+                      .sort((a, b) => {
+                        const pctA = a.progressCurrent / Math.max(1, a.progressTarget);
+                        const pctB = b.progressCurrent / Math.max(1, b.progressTarget);
+                        return pctB - pctA;
+                      })[0] ?? null;
+
+                  if (!nextLocked) {
+                    return (
+                      <div className="space-y-1">
+                        <p className="text-[11px] font-bold text-[#855C1C]">Next Achievement</p>
+                        <p className="text-xs font-extrabold text-[#343047]">
+                          All {achievementsSummary.totalBadgesCount} badges unlocked!
+                        </p>
+                        <p className="text-[11px] text-[#6B5022]">
+                          Explore your Certificates &amp; XP history in Achievements.
+                        </p>
+                      </div>
+                    );
+                  }
+
+                  const pct = Math.min(
+                    100,
+                    Math.round(
+                      (nextLocked.progressCurrent / Math.max(1, nextLocked.progressTarget)) * 100
+                    )
+                  );
+                  return (
+                    <>
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[11px] font-bold text-[#855C1C] flex items-center gap-1">
+                          <Lock className="w-3 h-3 shrink-0" />
+                          <span>Next Achievement</span>
+                        </span>
+                        <span className="font-mono text-[11px] font-bold text-[#7A5720] tabular-nums">
+                          {nextLocked.progressCurrent}/{nextLocked.progressTarget}
+                        </span>
+                      </div>
+                      <p className="text-xs font-extrabold text-[#343047] truncate">
+                        {nextLocked.title}
+                      </p>
+                      <div className="w-full h-1.5 rounded-full bg-[#F5E6C4] overflow-hidden">
+                        <div
+                          className="h-full rounded-full bg-[#C89B3C] transition-all duration-300"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <p className="text-[11px] text-[#6B5022] line-clamp-1">
+                        {nextLocked.progressLabel || nextLocked.unlockRequirement}
+                      </p>
+                    </>
+                  );
+                })()}
+              </div>
+            </div>
+          </div>
+
+          {/* Recently Earned Badges, Recent Achievements & Certificate Summary (5 cols) */}
+          <div className="lg:col-span-5 pastel-card p-6 flex flex-col justify-between gap-4">
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="font-display text-base font-extrabold text-[#343047]">
+                    Badges &amp; Certificates
+                  </h2>
+                  <p className="text-[11px] text-[#8B8295] tabular-nums">
+                    {achievementsSummary.unlockedCount} of {achievementsSummary.totalBadgesCount} badges ·{' '}
+                    {achievementsSummary.certificates.length}{' '}
+                    {achievementsSummary.certificates.length === 1
+                      ? 'certificate'
+                      : 'certificates'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenAchievements ? onOpenAchievements('badges') : onNavigate('achievements')
+                  }
+                  className="text-xs font-bold text-[#6F4FA8] hover:underline whitespace-nowrap shrink-0"
+                >
+                  View Badges
+                </button>
+              </div>
+
+              {/* Recently Earned Badges */}
+              {(() => {
+                const earnedBadges = achievementsSummary.badges
+                  .filter((b) => b.unlocked)
+                  .sort((a, b) =>
+                    String(b.unlockedAt ?? '').localeCompare(String(a.unlockedAt ?? ''))
+                  );
+
+                if (earnedBadges.length === 0) {
+                  return (
+                    <div className="p-3.5 rounded-[16px] bg-[#FAF6F2] border border-[#EEE6E5] space-y-1">
+                      <p className="text-xs font-bold text-[#343047]">No badges unlocked yet</p>
+                      <p className="text-[11px] text-[#6B6178]">
+                        Complete your first lesson or pass a Knowledge Check to unlock your first verified badge and +50 XP.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2">
+                    <p className="text-[11px] font-bold text-[#8B8295]">Recently Earned Badges</p>
+                    {earnedBadges.slice(0, 2).map((badge) => (
+                      <div
+                        key={badge.id}
+                        onClick={() =>
+                          onOpenAchievements
+                            ? onOpenAchievements('badges')
+                            : onNavigate('achievements')
+                        }
+                        className="p-2.5 rounded-[14px] bg-[#FAF6F2]/85 hover:bg-[#F0E9FA]/55 border border-[#EEE6E5] flex items-center justify-between gap-2.5 cursor-pointer transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-xs font-extrabold text-[#343047] truncate">
+                            {badge.title}
+                          </p>
+                          <p className="text-[11px] text-[#8B8295] truncate">
+                            {badge.categoryLabel} · {badge.rarity}
+                          </p>
+                        </div>
+                        <span className="text-[11px] font-semibold text-[#6F4FA8] whitespace-nowrap shrink-0 tabular-nums">
+                          {badge.unlockedAt
+                            ? new Date(badge.unlockedAt).toLocaleDateString(undefined, {
+                                month: 'short',
+                                day: 'numeric',
+                              })
+                            : 'Earned'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+
+              {/* Recent Achievements */}
+              {achievementsSummary.recentAchievements.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-bold text-[#8B8295]">Recent Achievements</p>
+                  <div className="space-y-1.5">
+                    {achievementsSummary.recentAchievements.slice(0, 2).map((item) => (
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between gap-2 text-xs py-1 border-b border-[#F2ECEA] last:border-b-0"
+                      >
+                        <span className="font-semibold text-[#343047] truncate">{item.title}</span>
+                        <span className="font-mono font-bold text-[#356640] whitespace-nowrap shrink-0 tabular-nums">
+                          {item.xpAmount ? `+${item.xpAmount} XP` : item.kind === 'certificate' ? 'Issued' : 'Earned'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Certificate Collection Summary */}
+            <div className="p-4 rounded-[18px] bg-[#0F1D3A] text-[#FCFBF7] space-y-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Award className="w-4 h-4 text-[#DFC278] shrink-0" />
+                  <span className="text-xs font-bold text-[#DFC278]">
+                    Professional Certificates
+                  </span>
+                </div>
+                <span className="font-mono text-xs font-bold tabular-nums text-[#FCFBF7]">
+                  {achievementsSummary.certificates.length} Issued
+                </span>
+              </div>
+
+              {achievementsSummary.certificates.length > 0 ? (
+                <p className="text-xs text-[#E4E9F4] leading-snug line-clamp-2">
+                  Latest:{' '}
+                  <span className="font-bold text-white">
+                    {achievementsSummary.certificates[0].title}
+                  </span>{' '}
+                  · {achievementsSummary.certificates[0].certificateNumber}
+                </p>
+              ) : (
+                <p className="text-[11px] text-[#CBD4E6] leading-relaxed">
+                  Complete all lessons and pass a Knowledge Check (80%+) in a course stage to earn your first verified Skillora certificate.
+                </p>
+              )}
+
+              <button
+                type="button"
+                onClick={() =>
+                  onOpenAchievements
+                    ? onOpenAchievements('certificates')
+                    : onNavigate('achievements')
+                }
+                className="w-full py-2 px-3 rounded-[12px] bg-[#C8A24A] hover:bg-[#DFC278] text-[#0F1D3A] text-xs font-extrabold transition-colors whitespace-nowrap"
+              >
+                {achievementsSummary.certificates.length > 0
+                  ? 'View & Download Certificates'
+                  : 'Track Certificate Requirements'}
+              </button>
+            </div>
           </div>
         </div>
       )}

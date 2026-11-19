@@ -8,6 +8,16 @@ import type {
   AchievementLevelInfo,
   AchievementStatsBreakdown,
   AchievementSummaryPayload,
+  BadgeCategory,
+  BadgeRarity,
+  CertificateEligibilityCandidate,
+  CertificatePublicNameVisibility,
+  CertificateStatus,
+  CertificateTemplateId,
+  CertificateType,
+  DirectionXpSummary,
+  IssuedCertificateRecord,
+  PublicCertificateVerificationResult,
   RecentAchievementItem,
   XpEventType,
   XpLedgerEntry,
@@ -23,6 +33,8 @@ export type AppView =
   | 'resources'
   | 'assistant'
   | 'progress'
+  | 'achievements'
+  | 'verify'
   | 'profile'
   | 'settings'
   | 'help';
@@ -499,6 +511,16 @@ export type {
   AchievementLevelInfo,
   AchievementStatsBreakdown,
   AchievementSummaryPayload,
+  BadgeCategory,
+  BadgeRarity,
+  CertificateEligibilityCandidate,
+  CertificatePublicNameVisibility,
+  CertificateStatus,
+  CertificateTemplateId,
+  CertificateType,
+  DirectionXpSummary,
+  IssuedCertificateRecord,
+  PublicCertificateVerificationResult,
   RecentAchievementItem,
   XpEventType,
   XpLedgerEntry,

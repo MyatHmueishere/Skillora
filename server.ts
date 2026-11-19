@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import {
@@ -31,8 +32,8 @@ import {
   handleAssistantChatRequest,
   handleAssistantChatStreamRequest,
   AssistantApiError,
-  AssistantHistoryTurnInput,
-  AssistantLessonContextInput,
+  type AssistantHistoryTurnInput,
+  type AssistantLessonContextInput,
 } from './server/assistantService';
 import {
   getPushPublicConfig,
@@ -45,18 +46,25 @@ import {
   verifyCronAuthorization,
   startNotificationScheduler,
   NotificationApiError,
-  ServerNotificationPreferences,
+  type ServerNotificationPreferences,
 } from './server/notificationService';
 import {
   handleSyncUserAchievements,
+  handleVerifyCertificatePublic,
+  handleUpdateCertificatePreferences,
   AchievementApiError,
 } from './server/achievementService';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function createApp() {
+async function startServer() {
   const app = express();
+  const parsedPort = Number.parseInt(process.env.PORT ?? '', 10);
+  const PORT = Number.isFinite(parsedPort) && parsedPort > 0 ? parsedPort : 3000;
+  const isProduction =
+    process.env.NODE_ENV === 'production' ||
+    path.basename(__filename) === 'server.js';
 
   app.use(express.json());
 
@@ -811,7 +819,71 @@ async function createApp() {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
+  // Public Certificate Verification endpoint (exposes only verified credential fields & respects privacy mode)
+  app.get('/api/certificates/verify/:certificateNumber', async (req, res) => {
+    try {
+      res.setHeader('Cache-Control', 'no-store');
+      const result = await handleVerifyCertificatePublic(req.params.certificateNumber || '');
+      res.status(200).json(result);
+    } catch (err) {
+      if (err instanceof AchievementApiError) {
+        res.status(err.status).json({ code: err.code, error: err.message });
+        return;
+      }
+      console.error(
+        '[Skillora] Unexpected error in GET /api/certificates/verify/:certificateNumber:',
+        err
+      );
+      res.status(500).json({
+        code: 'INTERNAL_SERVER_ERROR',
+        error: 'An unexpected error occurred while verifying that certificate ID.',
+      });
+    }
+  });
+
+  // Update certificate owner's display preferences (template style & public privacy visibility only)
+  app.patch('/api/certificates/:id/preferences', async (req, res) => {
+    try {
+      const body =
+        req.body && typeof req.body === 'object'
+          ? (req.body as {
+              templateId?: unknown;
+              publicNameVisibility?: unknown;
+            })
+          : {};
+      const certificate = await handleUpdateCertificatePreferences({
+        authorizationHeader: req.headers.authorization,
+        certificateId: req.params.id || '',
+        templateId:
+          body.templateId === 'classic_academic' ||
+          body.templateId === 'modern_professional' ||
+          body.templateId === 'excellence_award'
+            ? body.templateId
+            : undefined,
+        publicNameVisibility:
+          body.publicNameVisibility === 'full_name' ||
+          body.publicNameVisibility === 'initials'
+            ? body.publicNameVisibility
+            : undefined,
+      });
+      res.status(200).json({ certificate });
+    } catch (err) {
+      if (err instanceof AchievementApiError) {
+        res.status(err.status).json({ code: err.code, error: err.message });
+        return;
+      }
+      console.error(
+        '[Skillora] Unexpected error in PATCH /api/certificates/:id/preferences:',
+        err
+      );
+      res.status(500).json({
+        code: 'INTERNAL_SERVER_ERROR',
+        error: 'An unexpected error occurred while saving certificate preferences.',
+      });
+    }
+  });
+
+  if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -820,24 +892,40 @@ async function createApp() {
     app.use(vite.middlewares);
   } else {
     const distPath = path.resolve(__dirname, 'dist');
+    const indexHtmlPath = path.join(distPath, 'index.html');
+    if (!fs.existsSync(indexHtmlPath)) {
+      console.warn(
+        `[Skillora] Warning: production build not found at ${indexHtmlPath}. Run "npm run build" before starting in production.`
+      );
+    }
     app.use(express.static(distPath));
     app.get('*', (_req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(indexHtmlPath);
     });
   }
 
-  return app;
-}
-
-const app = await createApp();
-
-if (!process.env.VERCEL) {
-  const PORT = Number(process.env.PORT) || 3000;
-  app.listen(PORT, '0.0.0.0', () => {
+  const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`Skillora server running on http://0.0.0.0:${PORT}`);
     warmCatalogYouTubeVerification();
     startNotificationScheduler();
   });
+
+  server.on('error', (err) => {
+    console.error('Skillora server failed to listen:', err);
+    process.exit(1);
+  });
+
+  const shutdown = (signal: string) => {
+    console.log(`Received ${signal}, shutting down Skillora server...`);
+    server.close(() => {
+      process.exit(0);
+    });
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
-export default app;
+startServer().catch((err) => {
+  console.error('Failed to start Skillora server:', err);
+  process.exit(1);
+});

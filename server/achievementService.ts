@@ -2,8 +2,17 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import {
   AchievementBadgeId,
   AchievementSummaryPayload,
+  CertificatePublicNameVisibility,
+  CertificateStatus,
+  CertificateTemplateId,
+  CertificateType,
+  defaultTemplateForCertificateType,
   evaluateVerifiedAchievements,
+  formatCertificateTypeLabel,
+  IssuedCertificateRecord,
+  maskStudentNameForPrivacy,
   PersistedAchievementBadgeRow,
+  PublicCertificateVerificationResult,
   XpEventType,
   XpLedgerEntry,
 } from '../shared/achievementEngine';
@@ -27,6 +36,15 @@ export class AchievementApiError extends Error {
     this.code = code;
   }
 }
+
+const PHASE8_BADGE_IDS = new Set<string>([
+  'first_step',
+  'knowledge_seeker',
+  'consistent_learner',
+  'stage_master',
+  'path_finisher',
+  'skill_assessor',
+]);
 
 function getSupabaseEnv() {
   return {
@@ -59,6 +77,24 @@ function createUserScopedClient(accessToken: string): SupabaseClient {
   });
 }
 
+function createAnonPublicClient(): SupabaseClient {
+  const { supabaseUrl, supabasePublishableKey } = getSupabaseEnv();
+  if (!supabaseUrl || !supabasePublishableKey) {
+    throw new AchievementApiError(
+      503,
+      'SUPABASE_NOT_CONFIGURED',
+      'Supabase configuration is missing on the server.'
+    );
+  }
+  return createClient(supabaseUrl, supabasePublishableKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
+    },
+  });
+}
+
 function createServiceRoleClient(): SupabaseClient | null {
   const { supabaseUrl, supabaseServiceRoleKey } = getSupabaseEnv();
   if (!supabaseUrl || !supabaseServiceRoleKey) return null;
@@ -73,6 +109,7 @@ function createServiceRoleClient(): SupabaseClient | null {
 
 async function authenticateBearerRequest(authorizationHeader?: string): Promise<{
   userId: string;
+  authFullName: string;
   supabase: SupabaseClient;
 }> {
   const header = authorizationHeader?.trim() || '';
@@ -96,7 +133,14 @@ async function authenticateBearerRequest(authorizationHeader?: string): Promise<
       'Your session is invalid or expired. Please sign in again.'
     );
   }
-  return { userId: data.user.id, supabase };
+  const meta = (data.user.user_metadata ?? {}) as Record<string, unknown>;
+  const authFullName =
+    typeof meta.full_name === 'string' && meta.full_name.trim()
+      ? meta.full_name.trim()
+      : typeof meta.name === 'string' && meta.name.trim()
+      ? meta.name.trim()
+      : '';
+  return { userId: data.user.id, authFullName, supabase };
 }
 
 function isMissingSchemaError(err?: { code?: string; message?: string } | null): boolean {
@@ -106,10 +150,13 @@ function isMissingSchemaError(err?: { code?: string; message?: string } | null):
   return (
     code === '42P01' ||
     code === '42883' ||
+    code === '42703' ||
+    code === 'PGRST204' ||
     code === 'PGRST205' ||
     code === 'PGRST202' ||
     msg.includes('could not find the table') ||
     msg.includes('could not find the function') ||
+    msg.includes('could not find the') ||
     msg.includes('does not exist')
   );
 }
@@ -260,6 +307,7 @@ function mapXpLedgerRow(row: Record<string, unknown>): XpLedgerEntry {
     eventType,
     xpAmount: Number(row.xp_amount) || 0,
     title: String(row.title ?? 'Verified Learning Milestone'),
+    direction: typeof row.direction === 'string' && row.direction.trim() ? row.direction.trim() : null,
     roadmapId: typeof row.roadmap_id === 'string' ? row.roadmap_id : null,
     stageId: typeof row.stage_id === 'string' ? row.stage_id : null,
     lessonId: typeof row.lesson_id === 'string' ? row.lesson_id : null,
@@ -280,18 +328,71 @@ function mapPersistedBadgeRow(row: Record<string, unknown>): PersistedAchievemen
   };
 }
 
+function mapCertificateRow(row: Record<string, unknown>): IssuedCertificateRecord {
+  const rawType = String(row.certificate_type ?? 'course_completion');
+  const certificateType: CertificateType =
+    rawType === 'path_completion' || rawType === 'excellence'
+      ? rawType
+      : 'course_completion';
+
+  const rawTemplate = String(row.template_id ?? '');
+  const templateId: CertificateTemplateId =
+    rawTemplate === 'classic_academic' ||
+    rawTemplate === 'modern_professional' ||
+    rawTemplate === 'excellence_award'
+      ? rawTemplate
+      : defaultTemplateForCertificateType(certificateType);
+
+  const publicNameVisibility: CertificatePublicNameVisibility =
+    row.public_name_visibility === 'initials' ? 'initials' : 'full_name';
+
+  const status: CertificateStatus = row.status === 'revoked' ? 'revoked' : 'valid';
+
+  return {
+    id: String(row.id ?? row.certificate_key ?? ''),
+    certificateNumber: String(row.certificate_number ?? ''),
+    certificateKey: String(row.certificate_key ?? ''),
+    certificateType,
+    certificateTypeLabel: formatCertificateTypeLabel(certificateType),
+    title: String(row.title ?? 'Skillora Certificate'),
+    direction: String(row.direction ?? 'General Learning'),
+    studentName: String(row.student_name ?? 'Skillora Learner'),
+    roadmapId: typeof row.roadmap_id === 'string' ? row.roadmap_id : null,
+    stageId: typeof row.stage_id === 'string' ? row.stage_id : null,
+    templateId,
+    publicNameVisibility,
+    issuerName: typeof row.issuer_name === 'string' ? row.issuer_name : 'Skillora',
+    issuerDesignation:
+      typeof row.issuer_designation === 'string'
+        ? row.issuer_designation
+        : 'Academic & Curriculum Verification Board',
+    status,
+    completionDate:
+      typeof row.completion_date === 'string' ? row.completion_date : new Date().toISOString(),
+    issuedAt: typeof row.issued_at === 'string' ? row.issued_at : new Date().toISOString(),
+    verificationDigest: typeof row.verification_digest === 'string' ? row.verification_digest : '',
+    metadata:
+      row.metadata && typeof row.metadata === 'object'
+        ? (row.metadata as Record<string, unknown>)
+        : {},
+  };
+}
+
 async function fetchCanonicalUserProgressSources(
   supabase: SupabaseClient,
   userId: string,
+  authFullName: string,
   requestedTimeZone?: string
 ): Promise<{
+  studentName: string;
+  activeDirection: string;
   roadmaps: LearningRoadmapRecord[];
   knowledgeCheckAttempts: LessonKnowledgeCheckAttemptRecord[];
   learningSessions: LearningSessionRecord[];
   assessmentAttempts: AssessmentAttemptRecord[];
   resolvedTimeZone: string;
 }> {
-  const [roadmapsRes, kcRes, sessionsRes, assessmentsRes, notifPrefsRes] =
+  const [roadmapsRes, kcRes, sessionsRes, assessmentsRes, notifPrefsRes, profileRes] =
     await Promise.all([
       supabase
         .from('learning_roadmaps')
@@ -319,6 +420,11 @@ async function fetchCanonicalUserProgressSources(
         .from('notification_preferences')
         .select('timezone')
         .eq('user_id', userId)
+        .maybeSingle(),
+      supabase
+        .from('student_profiles')
+        .select('*')
+        .eq('id', userId)
         .maybeSingle(),
     ]);
 
@@ -376,12 +482,40 @@ async function fetchCanonicalUserProgressSources(
     !notifPrefsRes.error &&
     notifPrefsRes.data &&
     typeof (notifPrefsRes.data as { timezone?: unknown }).timezone === 'string'
-      ? ((notifPrefsRes.data as { timezone: string }).timezone)
+      ? (notifPrefsRes.data as { timezone: string }).timezone
       : undefined;
+
+  const profileRow =
+    !profileRes.error && profileRes.data
+      ? (profileRes.data as {
+          full_name?: unknown;
+          name?: unknown;
+          primary_direction?: unknown;
+          career_goal?: unknown;
+        })
+      : null;
+
+  const profileName =
+    profileRow && typeof profileRow.full_name === 'string' && profileRow.full_name.trim()
+      ? profileRow.full_name.trim()
+      : profileRow && typeof profileRow.name === 'string' && profileRow.name.trim()
+      ? profileRow.name.trim()
+      : '';
+  const studentName = profileName || authFullName || 'Skillora Learner';
+
+  const activeDirection =
+    (profileRow && typeof profileRow.primary_direction === 'string'
+      ? profileRow.primary_direction.trim()
+      : '') ||
+    (profileRow && typeof profileRow.career_goal === 'string'
+      ? profileRow.career_goal.trim()
+      : '');
 
   const resolvedTimeZone = resolveSafeTimeZone(requestedTimeZone || dbTimeZone);
 
   return {
+    studentName,
+    activeDirection,
     roadmaps,
     knowledgeCheckAttempts: Array.from(kcByKey.values()),
     learningSessions,
@@ -396,9 +530,11 @@ async function readPersistedAchievementRows(
 ): Promise<{
   ledger: XpLedgerEntry[];
   badges: PersistedAchievementBadgeRow[];
+  certificates: IssuedCertificateRecord[];
   schemaMigrationRequired: boolean;
+  certificatesSchemaMigrationRequired: boolean;
 }> {
-  const [ledgerRes, badgesRes] = await Promise.all([
+  const [ledgerRes, badgesRes, certsRes] = await Promise.all([
     client
       .from('achievement_xp_ledger')
       .select('*')
@@ -409,13 +545,24 @@ async function readPersistedAchievementRows(
       .select('*')
       .eq('user_id', userId)
       .order('unlocked_at', { ascending: false }),
+    client
+      .from('certificates')
+      .select('*')
+      .eq('user_id', userId)
+      .order('issued_at', { ascending: false }),
   ]);
 
   if (
     isMissingSchemaError(ledgerRes.error) ||
     isMissingSchemaError(badgesRes.error)
   ) {
-    return { ledger: [], badges: [], schemaMigrationRequired: true };
+    return {
+      ledger: [],
+      badges: [],
+      certificates: [],
+      schemaMigrationRequired: true,
+      certificatesSchemaMigrationRequired: true,
+    };
   }
 
   if (ledgerRes.error) {
@@ -433,12 +580,25 @@ async function readPersistedAchievementRows(
     );
   }
 
+  const certificatesSchemaMigrationRequired = isMissingSchemaError(certsRes.error);
+  if (certsRes.error && !certificatesSchemaMigrationRequired) {
+    throw new AchievementApiError(
+      certsRes.error.code === '42501' ? 403 : 500,
+      certsRes.error.code || 'CERTIFICATES_LOAD_FAILED',
+      'Failed to load certificates from Supabase.'
+    );
+  }
+
   return {
     ledger: (ledgerRes.data ?? []).map((r) => mapXpLedgerRow(r as Record<string, unknown>)),
     badges: (badgesRes.data ?? []).map((r) =>
       mapPersistedBadgeRow(r as Record<string, unknown>)
     ),
+    certificates: certificatesSchemaMigrationRequired
+      ? []
+      : (certsRes.data ?? []).map((r) => mapCertificateRow(r as Record<string, unknown>)),
     schemaMigrationRequired: false,
+    certificatesSchemaMigrationRequired,
   };
 }
 
@@ -446,54 +606,88 @@ export async function handleSyncUserAchievements(params: {
   authorizationHeader?: string;
   timeZone?: string;
 }): Promise<AchievementSummaryPayload> {
-  const { userId, supabase } = await authenticateBearerRequest(params.authorizationHeader);
+  const { userId, authFullName, supabase } = await authenticateBearerRequest(
+    params.authorizationHeader
+  );
   const sources = await fetchCanonicalUserProgressSources(
     supabase,
     userId,
+    authFullName,
     params.timeZone
   );
 
-  // Check existing persisted state first so we accurately detect newly awarded XP/badges
+  // Check existing persisted state first so we accurately detect newly awarded XP/badges/certificates
   const beforePersisted = await readPersistedAchievementRows(supabase, userId);
   let schemaMigrationRequired = beforePersisted.schemaMigrationRequired;
+  let certificatesSchemaMigrationRequired =
+    beforePersisted.certificatesSchemaMigrationRequired;
   let persistedInDatabase = !schemaMigrationRequired;
 
   let persistedLedger = beforePersisted.ledger;
   let persistedBadges = beforePersisted.badges;
+  let persistedCertificates = beforePersisted.certificates;
 
   if (!schemaMigrationRequired) {
     const serviceClient = createServiceRoleClient();
 
     if (serviceClient) {
-      // Trusted server-side service-role write path
       const preEval = evaluateVerifiedAchievements({
+        userId,
+        studentName: sources.studentName,
+        activeDirection: sources.activeDirection,
         roadmaps: sources.roadmaps,
         knowledgeCheckAttempts: sources.knowledgeCheckAttempts,
         learningSessions: sources.learningSessions,
         assessmentAttempts: sources.assessmentAttempts,
         persistedLedger: beforePersisted.ledger,
         persistedBadges: beforePersisted.badges,
+        persistedCertificates: beforePersisted.certificates,
         timeZone: sources.resolvedTimeZone,
       });
 
       if (preEval.newlyEligibleEvents.length > 0) {
-        const ledgerRowsToInsert = preEval.newlyEligibleEvents.map((evt) => ({
+        const ledgerRowsWithDir = preEval.newlyEligibleEvents.map((evt) => ({
           user_id: userId,
           event_key: evt.eventKey,
           event_type: evt.eventType,
           xp_amount: evt.xpAmount,
           title: evt.title,
+          direction: evt.direction || 'General Learning',
           roadmap_id: evt.roadmapId ?? null,
           stage_id: evt.stageId ?? null,
           lesson_id: evt.lessonId ?? null,
           awarded_at: evt.awardedAt,
         }));
-        const { error: upsertLedgerErr } = await serviceClient
+        let { error: upsertLedgerErr } = await serviceClient
           .from('achievement_xp_ledger')
-          .upsert(ledgerRowsToInsert, {
+          .upsert(ledgerRowsWithDir, {
             onConflict: 'user_id,event_key',
             ignoreDuplicates: true,
           });
+
+        // Graceful fallback if Phase 9 `direction` column hasn't been added yet
+        if (upsertLedgerErr && isMissingSchemaError(upsertLedgerErr)) {
+          certificatesSchemaMigrationRequired = true;
+          const legacyRows = preEval.newlyEligibleEvents.map((evt) => ({
+            user_id: userId,
+            event_key: evt.eventKey,
+            event_type: evt.eventType,
+            xp_amount: evt.xpAmount,
+            title: evt.title,
+            roadmap_id: evt.roadmapId ?? null,
+            stage_id: evt.stageId ?? null,
+            lesson_id: evt.lessonId ?? null,
+            awarded_at: evt.awardedAt,
+          }));
+          const retry = await serviceClient
+            .from('achievement_xp_ledger')
+            .upsert(legacyRows, {
+              onConflict: 'user_id,event_key',
+              ignoreDuplicates: true,
+            });
+          upsertLedgerErr = retry.error;
+        }
+
         if (upsertLedgerErr) {
           if (isMissingSchemaError(upsertLedgerErr)) {
             schemaMigrationRequired = true;
@@ -515,12 +709,32 @@ export async function handleSyncUserAchievements(params: {
           unlocked_at: b.unlockedAt,
           metadata: b.metadata,
         }));
-        const { error: upsertBadgeErr } = await serviceClient
+        let { error: upsertBadgeErr } = await serviceClient
           .from('user_achievements')
           .upsert(badgeRowsToInsert, {
             onConflict: 'user_id,badge_id',
             ignoreDuplicates: true,
           });
+
+        // Graceful fallback if Phase 9 CHECK constraint hasn't been expanded yet
+        if (upsertBadgeErr && upsertBadgeErr.code === '23514') {
+          certificatesSchemaMigrationRequired = true;
+          const legacyBadges = badgeRowsToInsert.filter((b) =>
+            PHASE8_BADGE_IDS.has(b.badge_id)
+          );
+          if (legacyBadges.length > 0) {
+            const retry = await serviceClient
+              .from('user_achievements')
+              .upsert(legacyBadges, {
+                onConflict: 'user_id,badge_id',
+                ignoreDuplicates: true,
+              });
+            upsertBadgeErr = retry.error;
+          } else {
+            upsertBadgeErr = null;
+          }
+        }
+
         if (upsertBadgeErr) {
           if (isMissingSchemaError(upsertBadgeErr)) {
             schemaMigrationRequired = true;
@@ -534,8 +748,53 @@ export async function handleSyncUserAchievements(params: {
           }
         }
       }
+
+      if (
+        !schemaMigrationRequired &&
+        !certificatesSchemaMigrationRequired &&
+        preEval.newlyEligibleCertificates.length > 0
+      ) {
+        const certRowsToInsert = preEval.newlyEligibleCertificates.map((c) => ({
+          user_id: userId,
+          certificate_number: c.certificateNumber,
+          certificate_key: c.certificateKey,
+          certificate_type: c.certificateType,
+          title: c.title,
+          direction: c.direction,
+          student_name: c.studentName,
+          roadmap_id: c.roadmapId,
+          stage_id: c.stageId,
+          template_id: c.templateId,
+          public_name_visibility: c.publicNameVisibility,
+          issuer_name: c.issuerName,
+          issuer_designation: c.issuerDesignation,
+          status: c.status,
+          completion_date: c.completionDate,
+          issued_at: c.issuedAt,
+          verification_digest: c.verificationDigest,
+          metadata: c.metadata ?? {},
+        }));
+        const { error: upsertCertErr } = await serviceClient
+          .from('certificates')
+          .upsert(certRowsToInsert, {
+            onConflict: 'user_id,certificate_key',
+            ignoreDuplicates: true,
+          });
+
+        if (upsertCertErr) {
+          if (isMissingSchemaError(upsertCertErr)) {
+            certificatesSchemaMigrationRequired = true;
+          } else {
+            throw new AchievementApiError(
+              500,
+              upsertCertErr.code || 'CERTIFICATES_PERSIST_FAILED',
+              'Failed to persist issued certificates.'
+            );
+          }
+        }
+      }
     } else {
-      // Trusted DB-side SECURITY DEFINER reconciliation (accepts zero client XP/badge parameters)
+      // Trusted DB-side SECURITY DEFINER reconciliation
       const { error: rpcError } = await supabase.rpc('sync_verified_user_achievements', {
         p_timezone: sources.resolvedTimeZone,
       });
@@ -558,21 +817,30 @@ export async function handleSyncUserAchievements(params: {
       const afterPersisted = await readPersistedAchievementRows(supabase, userId);
       persistedLedger = afterPersisted.ledger;
       persistedBadges = afterPersisted.badges;
+      persistedCertificates = afterPersisted.certificates;
+      certificatesSchemaMigrationRequired =
+        certificatesSchemaMigrationRequired ||
+        afterPersisted.certificatesSchemaMigrationRequired;
     }
   }
 
   const finalEval = evaluateVerifiedAchievements({
+    userId,
+    studentName: sources.studentName,
+    activeDirection: sources.activeDirection,
     roadmaps: sources.roadmaps,
     knowledgeCheckAttempts: sources.knowledgeCheckAttempts,
     learningSessions: sources.learningSessions,
     assessmentAttempts: sources.assessmentAttempts,
     persistedLedger,
     persistedBadges,
+    persistedCertificates,
     timeZone: sources.resolvedTimeZone,
   });
 
   const beforeKeys = new Set(beforePersisted.ledger.map((e) => e.eventKey));
   const beforeBadgeIds = new Set(beforePersisted.badges.map((b) => b.badgeId));
+  const beforeCertKeys = new Set(beforePersisted.certificates.map((c) => c.certificateKey));
 
   const newlyAwardedEvents = persistedInDatabase
     ? persistedLedger.filter((e) => !beforeKeys.has(e.eventKey))
@@ -585,12 +853,233 @@ export async function handleSyncUserAchievements(params: {
         .map((b) => b.badgeId) as AchievementBadgeId[])
     : [];
 
+  const newlyIssuedCertificateIds: string[] =
+    persistedInDatabase && !certificatesSchemaMigrationRequired
+      ? persistedCertificates
+          .filter((c) => !beforeCertKeys.has(c.certificateKey))
+          .map((c) => c.id)
+      : [];
+
   return {
     authenticated: true,
     persistedInDatabase,
     schemaMigrationRequired,
+    certificatesSchemaMigrationRequired,
     ...finalEval.summary,
     newlyAwardedXp,
     newlyUnlockedBadgeIds,
+    newlyIssuedCertificateIds,
   };
+}
+
+export async function handleVerifyCertificatePublic(
+  rawCertificateNumber: string
+): Promise<PublicCertificateVerificationResult> {
+  const cleaned = rawCertificateNumber.trim().toUpperCase();
+  if (!cleaned) {
+    return {
+      found: false,
+      authentic: false,
+      certificateNumber: '',
+    };
+  }
+
+  const serviceClient = createServiceRoleClient();
+  if (serviceClient) {
+    const { data, error } = await serviceClient
+      .from('certificates')
+      .select(
+        'certificate_number, certificate_type, title, direction, student_name, public_name_visibility, issuer_name, issuer_designation, status, completion_date, issued_at, verification_digest'
+      )
+      .ilike('certificate_number', cleaned)
+      .maybeSingle();
+
+    if (error) {
+      if (isMissingSchemaError(error)) {
+        return {
+          found: false,
+          authentic: false,
+          certificateNumber: cleaned,
+        };
+      }
+      throw new AchievementApiError(
+        500,
+        error.code || 'CERTIFICATE_VERIFY_FAILED',
+        'Could not verify certificate ID.'
+      );
+    }
+
+    if (!data) {
+      return {
+        found: false,
+        authentic: false,
+        certificateNumber: cleaned,
+      };
+    }
+
+    const row = data as Record<string, unknown>;
+    const certType: CertificateType =
+      row.certificate_type === 'path_completion' || row.certificate_type === 'excellence'
+        ? row.certificate_type
+        : 'course_completion';
+    const privacyMode: CertificatePublicNameVisibility =
+      row.public_name_visibility === 'initials' ? 'initials' : 'full_name';
+    const status: CertificateStatus = row.status === 'revoked' ? 'revoked' : 'valid';
+
+    return {
+      found: true,
+      authentic: status === 'valid',
+      certificateNumber: String(row.certificate_number ?? cleaned),
+      certificateType: certType,
+      certificateTypeLabel: formatCertificateTypeLabel(certType),
+      title: String(row.title ?? 'Skillora Certificate'),
+      direction: String(row.direction ?? 'General Learning'),
+      studentDisplayName: maskStudentNameForPrivacy(
+        String(row.student_name ?? 'Skillora Learner'),
+        privacyMode
+      ),
+      privacyMode,
+      issuedAt: typeof row.issued_at === 'string' ? row.issued_at : undefined,
+      completionDate:
+        typeof row.completion_date === 'string' ? row.completion_date : undefined,
+      status,
+      issuerName: typeof row.issuer_name === 'string' ? row.issuer_name : 'Skillora',
+      issuerDesignation:
+        typeof row.issuer_designation === 'string'
+          ? row.issuer_designation
+          : 'Academic & Curriculum Verification Board',
+      verificationDigest:
+        typeof row.verification_digest === 'string' ? row.verification_digest : undefined,
+    };
+  }
+
+  // Fallback to SECURITY DEFINER public verification RPC
+  const anon = createAnonPublicClient();
+  const { data, error } = await anon.rpc('verify_certificate_public', {
+    p_certificate_number: cleaned,
+  });
+
+  if (error) {
+    if (isMissingSchemaError(error)) {
+      return {
+        found: false,
+        authentic: false,
+        certificateNumber: cleaned,
+      };
+    }
+    throw new AchievementApiError(
+      500,
+      error.code || 'CERTIFICATE_VERIFY_RPC_FAILED',
+      'Could not verify certificate ID.'
+    );
+  }
+
+  if (!data || typeof data !== 'object') {
+    return {
+      found: false,
+      authentic: false,
+      certificateNumber: cleaned,
+    };
+  }
+
+  return data as PublicCertificateVerificationResult;
+}
+
+export async function handleUpdateCertificatePreferences(params: {
+  authorizationHeader?: string;
+  certificateId: string;
+  templateId?: CertificateTemplateId;
+  publicNameVisibility?: CertificatePublicNameVisibility;
+}): Promise<IssuedCertificateRecord> {
+  const { userId, supabase } = await authenticateBearerRequest(params.authorizationHeader);
+  const certificateId = params.certificateId.trim();
+  if (!certificateId) {
+    throw new AchievementApiError(400, 'INVALID_CERTIFICATE_ID', 'Certificate ID is required.');
+  }
+
+  if (
+    params.templateId !== undefined &&
+    params.templateId !== 'classic_academic' &&
+    params.templateId !== 'modern_professional' &&
+    params.templateId !== 'excellence_award'
+  ) {
+    throw new AchievementApiError(400, 'INVALID_TEMPLATE', 'Unsupported certificate template.');
+  }
+
+  if (
+    params.publicNameVisibility !== undefined &&
+    params.publicNameVisibility !== 'full_name' &&
+    params.publicNameVisibility !== 'initials'
+  ) {
+    throw new AchievementApiError(
+      400,
+      'INVALID_PRIVACY_MODE',
+      'Unsupported privacy visibility setting.'
+    );
+  }
+
+  const serviceClient = createServiceRoleClient();
+  if (serviceClient) {
+    const updates: Record<string, string> = {};
+    if (params.templateId) updates.template_id = params.templateId;
+    if (params.publicNameVisibility) {
+      updates.public_name_visibility = params.publicNameVisibility;
+    }
+
+    const { data, error } = await serviceClient
+      .from('certificates')
+      .update(updates)
+      .eq('id', certificateId)
+      .eq('user_id', userId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) {
+      if (isMissingSchemaError(error)) {
+        throw new AchievementApiError(
+          409,
+          'CERTIFICATES_MIGRATION_REQUIRED',
+          'Run the Phase 9 certificates migration in Supabase to save display preferences.'
+        );
+      }
+      throw new AchievementApiError(
+        500,
+        error.code || 'CERTIFICATE_PREFS_UPDATE_FAILED',
+        'Could not update certificate display preferences.'
+      );
+    }
+
+    if (!data) {
+      throw new AchievementApiError(
+        404,
+        'CERTIFICATE_NOT_FOUND',
+        'Certificate not found or you do not have permission to update it.'
+      );
+    }
+
+    return mapCertificateRow(data as Record<string, unknown>);
+  }
+
+  const { data, error } = await supabase.rpc('update_certificate_display_preferences', {
+    p_certificate_id: certificateId,
+    p_template_id: params.templateId ?? null,
+    p_public_name_visibility: params.publicNameVisibility ?? null,
+  });
+
+  if (error) {
+    if (isMissingSchemaError(error)) {
+      throw new AchievementApiError(
+        409,
+        'CERTIFICATES_MIGRATION_REQUIRED',
+        'Run the Phase 9 certificates migration in Supabase to save display preferences.'
+      );
+    }
+    throw new AchievementApiError(
+      400,
+      error.code || 'CERTIFICATE_PREFS_UPDATE_FAILED',
+      error.message || 'Could not update certificate display preferences.'
+    );
+  }
+
+  return mapCertificateRow(data as Record<string, unknown>);
 }

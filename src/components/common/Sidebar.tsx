@@ -11,6 +11,7 @@ import {
   HelpCircle,
   X,
   LogOut,
+  Trophy,
 } from 'lucide-react';
 import { AppView, UserProfile } from '../../types';
 import { Logo } from './Logo';
@@ -42,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { id: 'resources' as AppView, label: 'Explore Resources', icon: BookOpen },
     { id: 'assistant' as AppView, label: 'AI Learning Assistant', icon: Sparkles },
     { id: 'progress' as AppView, label: 'My Progress', icon: BarChart3 },
+    { id: 'achievements' as AppView, label: 'Achievements', icon: Trophy },
   ];
 
   const bottomNavItems = [
