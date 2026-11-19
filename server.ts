@@ -55,9 +55,8 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-async function startServer() {
+async function createApp() {
   const app = express();
-  const PORT = Number(process.env.PORT) || 3000;
 
   app.use(express.json());
 
@@ -812,7 +811,7 @@ async function startServer() {
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+  if (process.env.NODE_ENV !== 'production' && !process.env.VERCEL) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -827,6 +826,13 @@ async function startServer() {
     });
   }
 
+  return app;
+}
+
+const app = await createApp();
+
+if (!process.env.VERCEL) {
+  const PORT = Number(process.env.PORT) || 3000;
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Skillora server running on http://0.0.0.0:${PORT}`);
     warmCatalogYouTubeVerification();
@@ -834,7 +840,4 @@ async function startServer() {
   });
 }
 
-startServer().catch((err) => {
-  console.error('Failed to start Skillora server:', err);
-  process.exit(1);
-});
+export default app;
